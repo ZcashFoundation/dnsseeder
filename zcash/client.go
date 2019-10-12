@@ -15,6 +15,10 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	ErrRepeatConnection = errors.New("attempted repeat connection to existing peer")
+)
+
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "MagicBean",
 	UserAgentVersion: "2.0.7",
@@ -29,9 +33,9 @@ type Seeder struct {
 	config *peer.Config
 	logger *log.Logger
 
-	handshakeSignals map[string]chan *peer.Peer
-	pendingPeers     map[string]*peer.Peer
-	livePeers        map[string]*peer.Peer
+	handshakeSignals *sync.Map
+	pendingPeers     *sync.Map
+	livePeers        *sync.Map
 
 	// For mutating the above
 	peerState sync.RWMutex
@@ -48,9 +52,9 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 	newSeeder := Seeder{
 		config:           config,
 		logger:           logger,
-		handshakeSignals: make(map[string]chan *peer.Peer),
-		pendingPeers:     make(map[string]*peer.Peer),
-		livePeers:        make(map[string]*peer.Peer),
+		handshakeSignals: new(sync.Map),
+		pendingPeers:     new(sync.Map),
+		livePeers:        new(sync.Map),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -73,9 +77,9 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 	newSeeder := Seeder{
 		config:           config,
 		logger:           logger,
-		handshakeSignals: make(map[string]chan *peer.Peer),
-		pendingPeers:     make(map[string]*peer.Peer),
-		livePeers:        make(map[string]*peer.Peer),
+		handshakeSignals: new(sync.Map),
+		pendingPeers:     new(sync.Map),
+		livePeers:        new(sync.Map),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -101,33 +105,27 @@ func newSeederPeerConfig(magic network.Network, template *peer.Config) (*peer.Co
 }
 
 func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
-	// lock peers for read
-	s.peerState.RLock()
-	_, expectingPeer := s.pendingPeers[p.Addr()]
-	s.peerState.RUnlock()
+	// Check if we're expecting to hear from this peer
+	_, ok := s.pendingPeers.Load(p.Addr())
 
-	if !expectingPeer {
+	if !ok {
 		s.logger.Printf("Got verack from unexpected peer %s", p.Addr())
 		return
 	}
 
-	s.peerState.Lock()
-	{
-		// Add to set of live peers
-		s.livePeers[p.Addr()] = p
+	// Add to set of live peers
+	s.livePeers.Store(p.Addr(), p)
 
-		// Remove from set of pending peers
-		delete(s.pendingPeers, p.Addr())
+	// Remove from set of pending peers
+	s.pendingPeers.Delete(p.Addr())
+
+	// Signal successful connection
+	if signal, ok := s.handshakeSignals.Load(p.Addr()); ok {
+		signal.(chan struct{}) <- struct{}{}
+		return
 	}
-	s.peerState.Unlock()
 
-	s.peerState.RLock()
-	{
-		// Signal successful connection
-		s.handshakeSignals[p.Addr()] <- p
-	}
-	s.peerState.RUnlock()
-
+	s.logger.Printf("Got verack from peer without a callback channel: %s", p.Addr())
 }
 
 // ConnectToPeer attempts to connect to a peer on the default port at the
@@ -140,44 +138,33 @@ func (s *Seeder) ConnectToPeer(addr string) error {
 		return errors.Wrap(err, "constructing outbound peer")
 	}
 
+	_, alreadyPending := s.pendingPeers.LoadOrStore(p.Addr(), p)
+	_, alreadyHandshaking := s.handshakeSignals.LoadOrStore(p.Addr(), make(chan struct{}, 1))
+	_, alreadyLive := s.livePeers.Load(p.Addr())
+
+	if alreadyPending || alreadyHandshaking || alreadyLive {
+		s.logger.Printf("Attempted repeat connection to peer %s", p.Addr())
+		return ErrRepeatConnection
+	}
+
 	conn, err := net.Dial("tcp", p.Addr())
 	if err != nil {
 		return errors.Wrap(err, "dialing new peer address")
 	}
 
-	s.peerState.Lock()
-	{
-		// Record that we're expecting a verack from this peer.
-		s.pendingPeers[p.Addr()] = p
-
-		// Make a channel for us to wait on.
-		s.handshakeSignals[p.Addr()] = make(chan *peer.Peer, 1)
-	}
-	s.peerState.Unlock()
-
 	// Begin connection negotiation.
 	s.logger.Printf("Handshake initated with new peer %s", p.Addr())
 	p.AssociateConnection(conn)
 
-	for {
-		// lock signals map for select
-		s.peerState.RLock()
-		handshakeChan := s.handshakeSignals[p.Addr()]
-		s.peerState.RUnlock()
+	handshakeChan, _ := s.handshakeSignals.Load(p.Addr())
 
-		select {
-		case verackPeer := <-handshakeChan:
-			s.peerState.Lock()
-			{
-				close(s.handshakeSignals[p.Addr()])
-				delete(s.handshakeSignals, p.Addr())
-			}
-			s.peerState.Unlock()
-			s.logger.Printf("Handshake completed with new peer %s", verackPeer.Addr())
-			return nil
-		case <-time.After(time.Second * 1):
-			return errors.New("peer handshake timed out")
-		}
+	select {
+	case <-handshakeChan.(chan struct{}):
+		s.logger.Printf("Handshake completed with new peer %s", p.Addr())
+		s.handshakeSignals.Delete(p.Addr())
+		return nil
+	case <-time.After(time.Second * 1):
+		return errors.New("peer handshake timed out")
 	}
 
 	panic("This should be unreachable")
@@ -185,37 +172,41 @@ func (s *Seeder) ConnectToPeer(addr string) error {
 
 func (s *Seeder) GetPeer(addr string) (*peer.Peer, error) {
 	lookupKey := net.JoinHostPort(addr, s.config.ChainParams.DefaultPort)
-	s.peerState.RLock()
-	p, ok := s.livePeers[lookupKey]
-	s.peerState.RUnlock()
+	p, ok := s.livePeers.Load(lookupKey)
 
-	if !ok {
-		return nil, errors.New("no such active peer")
+	if ok {
+		return p.(*peer.Peer), nil
 	}
 
-	return p, nil
-}
-
-func (s *Seeder) WaitForPeers() {
-	panic("not yet implemented")
+	return nil, errors.New("no such active peer")
 }
 
 func (s *Seeder) DisconnectAllPeers() {
-	s.peerState.Lock()
-	{
-		for _, v := range s.pendingPeers {
-			s.logger.Printf("Disconnecting from peer %s", v.Addr())
-			v.Disconnect()
-			v.WaitForDisconnect()
+	s.pendingPeers.Range(func(key, value interface{}) bool {
+		p, ok := value.(*peer.Peer)
+		if !ok {
+			s.logger.Printf("Invalid peer in pendingPeers")
+			return false
 		}
-		s.pendingPeers = make(map[string]*peer.Peer)
+		s.logger.Printf("Disconnecting from pending peer %s", p.Addr())
+		p.Disconnect()
+		p.WaitForDisconnect()
+		s.pendingPeers.Delete(key)
+		return true
+	})
 
-		for _, v := range s.livePeers {
-			s.logger.Printf("Disconnecting from peer %s", v.Addr())
-			v.Disconnect()
-			v.WaitForDisconnect()
+	s.livePeers.Range(func(key, value interface{}) bool {
+		p, ok := value.(*peer.Peer)
+		if !ok {
+			s.logger.Printf("Invalid peer in livePeers")
+			return false
 		}
-		s.livePeers = make(map[string]*peer.Peer)
-	}
-	s.peerState.Unlock()
+		s.logger.Printf("Disconnecting from live peer %s", p.Addr())
+		p.Disconnect()
+		p.WaitForDisconnect()
+		s.livePeers.Delete(key)
+		return true
+	})
 }
+
+func (s *Seeder) RequestAddresses() {}

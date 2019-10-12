@@ -3,12 +3,10 @@ package zcash
 import (
 	"context"
 	"net"
-	"os"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btclog"
 	"github.com/gtank/coredns-zcash/zcash/network"
 )
 
@@ -21,10 +19,10 @@ func mockLocalPeer(ctx context.Context) error {
 
 	config.AllowSelfConns = true
 
-	backendLogger := btclog.NewBackend(os.Stdout)
-	mockPeerLogger := backendLogger.Logger("mockPeer")
-	//mockPeerLogger.SetLevel(btclog.LevelTrace)
-	peer.UseLogger(mockPeerLogger)
+	// backendLogger := btclog.NewBackend(os.Stdout)
+	// mockPeerLogger := backendLogger.Logger("mockPeer")
+	// mockPeerLogger.SetLevel(btclog.LevelTrace)
+	// peer.UseLogger(mockPeerLogger)
 
 	mockPeer := peer.NewInboundPeer(config)
 
@@ -103,19 +101,36 @@ func TestOutboundPeerAsync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		err := regSeeder.ConnectToPeer("127.0.0.1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		regSeeder.DisconnectAllPeers()
-		done <- struct{}{}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(time.Second * 1):
-		t.Error("timed out")
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			err := regSeeder.ConnectToPeer("127.0.0.1")
+			if err != nil && err != ErrRepeatConnection {
+				t.Error(err)
+			}
+			wg.Done()
+		}()
 	}
+
+	wg.Wait()
+
+	// Can we address that peer if we want to?
+	p, err := regSeeder.GetPeer("127.0.0.1")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	if p.Connected() {
+		// Shouldn't try to connect to a live peer again
+		err := regSeeder.ConnectToPeer("127.0.0.1")
+		if err != ErrRepeatConnection {
+			t.Error("should have caught repeat connection attempt")
+		}
+	} else {
+		t.Error("Peer never connected")
+	}
+
+	regSeeder.DisconnectAllPeers()
 }
