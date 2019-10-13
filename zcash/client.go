@@ -17,6 +17,7 @@ import (
 
 var (
 	ErrRepeatConnection = errors.New("attempted repeat connection to existing peer")
+	ErrNoSuchPeer       = errors.New("no record of requested peer")
 )
 
 var defaultPeerConfig = &peer.Config{
@@ -37,6 +38,8 @@ type Seeder struct {
 	pendingPeers     *sync.Map
 	livePeers        *sync.Map
 
+	addrRecvChan chan *wire.NetAddress
+
 	// For mutating the above
 	peerState sync.RWMutex
 }
@@ -55,9 +58,11 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		handshakeSignals: new(sync.Map),
 		pendingPeers:     new(sync.Map),
 		livePeers:        new(sync.Map),
+		addrRecvChan:     make(chan *wire.NetAddress, 100),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
+	newSeeder.config.Listeners.OnAddr = newSeeder.onAddr
 
 	return &newSeeder, nil
 }
@@ -80,9 +85,11 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		handshakeSignals: new(sync.Map),
 		pendingPeers:     new(sync.Map),
 		livePeers:        new(sync.Map),
+		addrRecvChan:     make(chan *wire.NetAddress, 100),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
+	newSeeder.config.Listeners.OnAddr = newSeeder.onAddr
 
 	return &newSeeder, nil
 }
@@ -156,6 +163,7 @@ func (s *Seeder) ConnectToPeer(addr string) error {
 	s.logger.Printf("Handshake initated with new peer %s", p.Addr())
 	p.AssociateConnection(conn)
 
+	// TODO: handle disconnect during this
 	handshakeChan, _ := s.handshakeSignals.Load(p.Addr())
 
 	select {
@@ -178,7 +186,25 @@ func (s *Seeder) GetPeer(addr string) (*peer.Peer, error) {
 		return p.(*peer.Peer), nil
 	}
 
-	return nil, errors.New("no such active peer")
+	return nil, ErrNoSuchPeer
+}
+
+func (s *Seeder) DisconnectPeer(addr string) error {
+	lookupKey := net.JoinHostPort(addr, s.config.ChainParams.DefaultPort)
+	p, ok := s.livePeers.Load(lookupKey)
+
+	if !ok {
+		return ErrNoSuchPeer
+	}
+
+	// TODO: type safety and error handling
+
+	v := p.(*peer.Peer)
+	v.Disconnect()
+	v.WaitForDisconnect()
+	s.livePeers.Delete(lookupKey)
+
+	return nil
 }
 
 func (s *Seeder) DisconnectAllPeers() {
@@ -202,11 +228,37 @@ func (s *Seeder) DisconnectAllPeers() {
 			return false
 		}
 		s.logger.Printf("Disconnecting from live peer %s", p.Addr())
-		p.Disconnect()
-		p.WaitForDisconnect()
-		s.livePeers.Delete(key)
+		s.DisconnectPeer(p.Addr())
 		return true
 	})
 }
 
-func (s *Seeder) RequestAddresses() {}
+func (s *Seeder) RequestAddresses() {
+	s.livePeers.Range(func(key, value interface{}) bool {
+		p, ok := value.(*peer.Peer)
+		if !ok {
+			s.logger.Printf("Invalid peer in livePeers")
+			return false
+		}
+		s.logger.Printf("Requesting addresses from peer %s", p.Addr())
+		p.QueueMessage(wire.NewMsgGetAddr(), nil)
+		return true
+	})
+}
+
+func (s *Seeder) WaitForMoreAddresses() {
+	<-s.addrRecvChan
+}
+
+func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
+	if len(msg.AddrList) == 0 {
+		s.logger.Printf("Got empty addr message from peer %s. Disconnecting.", p.Addr())
+		s.DisconnectPeer(p.Addr())
+		return
+	}
+
+	s.logger.Printf("Got %d addrs from peer %s", len(msg.AddrList), p.Addr())
+	for _, addr := range msg.AddrList {
+		s.addrRecvChan <- addr
+	}
+}

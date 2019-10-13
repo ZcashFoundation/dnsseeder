@@ -1,101 +1,106 @@
 package zcash
 
 import (
-	"context"
 	"net"
+	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/peer"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btclog"
 	"github.com/gtank/coredns-zcash/zcash/network"
 )
 
-func mockLocalPeer(ctx context.Context) error {
+func TestMain(m *testing.M) {
+	startMockLoop()
+	exitCode := m.Run()
+	os.Exit(exitCode)
+}
+
+func startMockLoop() {
 	// Configure peer to act as a regtest node that offers no services.
 	config, err := newSeederPeerConfig(network.Regtest, defaultPeerConfig)
 	if err != nil {
-		return err
+		return
 	}
 
 	config.AllowSelfConns = true
 
-	// backendLogger := btclog.NewBackend(os.Stdout)
-	// mockPeerLogger := backendLogger.Logger("mockPeer")
-	// mockPeerLogger.SetLevel(btclog.LevelTrace)
-	// peer.UseLogger(mockPeerLogger)
+	backendLogger := btclog.NewBackend(os.Stdout)
+	mockPeerLogger := backendLogger.Logger("mockPeer")
+	//mockPeerLogger.SetLevel(btclog.LevelTrace)
+	peer.UseLogger(mockPeerLogger)
 
-	mockPeer := peer.NewInboundPeer(config)
+	config.Listeners.OnGetAddr = func(p *peer.Peer, msg *wire.MsgGetAddr) {
+		cache := make([]*wire.NetAddress, 0, 1)
+		addr := wire.NewNetAddressTimestamp(
+			time.Now(),
+			0,
+			net.ParseIP("127.0.0.1"),
+			uint16(8233),
+		)
+		cache = append(cache, addr)
+		_, err := p.PushAddrMsg(cache)
+		if err != nil {
+			mockPeerLogger.Error(err)
+		}
+	}
 
 	listenAddr := net.JoinHostPort("127.0.0.1", config.ChainParams.DefaultPort)
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return err
+		return
 	}
 
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
 
-		mockPeer.AssociateConnection(conn)
-
-		select {
-		case <-ctx.Done():
-			mockPeer.Disconnect()
-			mockPeer.WaitForDisconnect()
-			return
+			mockPeer := peer.NewInboundPeer(config)
+			mockPeer.AssociateConnection(conn)
 		}
 	}()
-
-	return nil
 }
 
 func TestOutboundPeerSync(t *testing.T) {
-	testContext, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := mockLocalPeer(testContext); err != nil {
-		t.Logf("error starting mock peer (%v).", err)
-	}
-
 	regSeeder, err := newTestSeeder(network.Regtest)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return
 	}
 
 	err = regSeeder.ConnectToPeer("127.0.0.1")
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return
 	}
 
 	// Can we address that peer if we want to?
 	p, err := regSeeder.GetPeer("127.0.0.1")
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return
 	}
 
 	if p.Connected() {
-		regSeeder.DisconnectAllPeers()
+		regSeeder.DisconnectPeer("127.0.0.1")
 	} else {
 		t.Error("Peer never connected")
 	}
 
 	// Can we STILL address a flushed peer?
 	p, err = regSeeder.GetPeer("127.0.0.1")
-	if err == nil {
+	if err != ErrNoSuchPeer {
 		t.Error("Peer should have been cleared on disconnect")
 	}
 }
 
 func TestOutboundPeerAsync(t *testing.T) {
-	testContext, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := mockLocalPeer(testContext); err != nil {
-		t.Logf("error starting mock peer (%v).", err)
-	}
-
 	regSeeder, err := newTestSeeder(network.Regtest)
 	if err != nil {
 		t.Fatal(err)
@@ -133,4 +138,21 @@ func TestOutboundPeerAsync(t *testing.T) {
 	}
 
 	regSeeder.DisconnectAllPeers()
+}
+
+func TestRequestAddresses(t *testing.T) {
+	regSeeder, err := newTestSeeder(network.Regtest)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	err = regSeeder.ConnectToPeer("127.0.0.1")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	regSeeder.RequestAddresses()
+	regSeeder.WaitForMoreAddresses()
 }
