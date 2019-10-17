@@ -111,6 +111,11 @@ func newSeederPeerConfig(magic network.Network, template *peer.Config) (*peer.Co
 	return &newPeerConfig, nil
 }
 
+// GetNetworkDefaultPort returns the default port of the network this seeder is configured for.
+func (s *Seeder) GetNetworkDefaultPort() string {
+	return s.config.ChainParams.DefaultPort
+}
+
 func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
 	// Check if we're expecting to hear from this peer
 	_, ok := s.pendingPeers.Load(p.Addr())
@@ -136,10 +141,15 @@ func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
 }
 
 // ConnectToPeer attempts to connect to a peer on the default port at the
-// specified address. It returns either a live peer connection or an error.
-func (s *Seeder) ConnectToPeer(addr string) error {
-	connectionString := net.JoinHostPort(addr, s.config.ChainParams.DefaultPort)
+// specified address. It returns an error if it can't complete handshake with
+// the peer. Otherwise it returns nil and adds the peer to the list of live
+// connections and known-good addresses.
+func (s *Seeder) ConnectOnDefaultPort(addr string) error {
+	return s.Connect(addr, s.config.ChainParams.DefaultPort)
+}
 
+func (s *Seeder) Connect(addr, port string) error {
+	connectionString := net.JoinHostPort(addr, port)
 	p, err := peer.NewOutboundPeer(s.config, connectionString)
 	if err != nil {
 		return errors.Wrap(err, "constructing outbound peer")
@@ -178,9 +188,10 @@ func (s *Seeder) ConnectToPeer(addr string) error {
 	panic("This should be unreachable")
 }
 
+// GetPeer returns a live peer identified by "host:port" string, or an error if
+// we aren't connected to that peer.
 func (s *Seeder) GetPeer(addr string) (*peer.Peer, error) {
-	lookupKey := net.JoinHostPort(addr, s.config.ChainParams.DefaultPort)
-	p, ok := s.livePeers.Load(lookupKey)
+	p, ok := s.livePeers.Load(addr)
 
 	if ok {
 		return p.(*peer.Peer), nil
@@ -189,9 +200,10 @@ func (s *Seeder) GetPeer(addr string) (*peer.Peer, error) {
 	return nil, ErrNoSuchPeer
 }
 
+// DisconnectPeer disconnects from a live peer identified by "host:port"
+// string. It returns an error if we aren't connected to that peer.
 func (s *Seeder) DisconnectPeer(addr string) error {
-	lookupKey := net.JoinHostPort(addr, s.config.ChainParams.DefaultPort)
-	p, ok := s.livePeers.Load(lookupKey)
+	p, ok := s.livePeers.Load(addr)
 
 	if !ok {
 		return ErrNoSuchPeer
@@ -202,11 +214,12 @@ func (s *Seeder) DisconnectPeer(addr string) error {
 	v := p.(*peer.Peer)
 	v.Disconnect()
 	v.WaitForDisconnect()
-	s.livePeers.Delete(lookupKey)
+	s.livePeers.Delete(addr)
 
 	return nil
 }
 
+// DisconnectAllPeers terminates the connections to all live and pending peers.
 func (s *Seeder) DisconnectAllPeers() {
 	s.pendingPeers.Range(func(key, value interface{}) bool {
 		p, ok := value.(*peer.Peer)

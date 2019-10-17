@@ -74,27 +74,27 @@ func TestOutboundPeerSync(t *testing.T) {
 		return
 	}
 
-	err = regSeeder.ConnectToPeer("127.0.0.1")
+	err = regSeeder.ConnectOnDefaultPort("127.0.0.1")
 	if err != nil {
 		t.Error(err)
 		return
 	}
 
 	// Can we address that peer if we want to?
-	p, err := regSeeder.GetPeer("127.0.0.1")
+	p, err := regSeeder.GetPeer("127.0.0.1:18344")
 	if err != nil {
 		t.Error(err)
 		return
 	}
 
 	if p.Connected() {
-		regSeeder.DisconnectPeer("127.0.0.1")
+		regSeeder.DisconnectPeer("127.0.0.1:18344")
 	} else {
 		t.Error("Peer never connected")
 	}
 
 	// Can we STILL address a flushed peer?
-	p, err = regSeeder.GetPeer("127.0.0.1")
+	p, err = regSeeder.GetPeer("127.0.0.1:18344")
 	if err != ErrNoSuchPeer {
 		t.Error("Peer should have been cleared on disconnect")
 	}
@@ -110,7 +110,7 @@ func TestOutboundPeerAsync(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func() {
-			err := regSeeder.ConnectToPeer("127.0.0.1")
+			err := regSeeder.ConnectOnDefaultPort("127.0.0.1")
 			if err != nil && err != ErrRepeatConnection {
 				t.Error(err)
 			}
@@ -121,7 +121,7 @@ func TestOutboundPeerAsync(t *testing.T) {
 	wg.Wait()
 
 	// Can we address that peer if we want to?
-	p, err := regSeeder.GetPeer("127.0.0.1")
+	p, err := regSeeder.GetPeer("127.0.0.1:18344")
 	if err != nil {
 		t.Error(err)
 		return
@@ -129,7 +129,7 @@ func TestOutboundPeerAsync(t *testing.T) {
 
 	if p.Connected() {
 		// Shouldn't try to connect to a live peer again
-		err := regSeeder.ConnectToPeer("127.0.0.1")
+		err := regSeeder.ConnectOnDefaultPort("127.0.0.1")
 		if err != ErrRepeatConnection {
 			t.Error("should have caught repeat connection attempt")
 		}
@@ -147,7 +147,7 @@ func TestRequestAddresses(t *testing.T) {
 		return
 	}
 
-	err = regSeeder.ConnectToPeer("127.0.0.1")
+	err = regSeeder.ConnectOnDefaultPort("127.0.0.1")
 	if err != nil {
 		t.Error(err)
 		return
