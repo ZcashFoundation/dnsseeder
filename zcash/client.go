@@ -21,6 +21,7 @@ var (
 	ErrRepeatConnection = errors.New("attempted repeat connection to existing peer")
 	ErrNoSuchPeer       = errors.New("no record of requested peer")
 	ErrAddressTimeout   = errors.New("wait for addreses timed out")
+	ErrBlacklistedPeer  = errors.New("peer is blacklisted")
 )
 
 var defaultPeerConfig = &peer.Config{
@@ -149,11 +150,19 @@ func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
 		return
 	}
 
-	// Add to list of known good addresses
+	// Add to list of known good addresses if we don't already have it.
+	// Otherwise, update the last-valid time.
+
 	newAddr := &Address{
 		netaddr:   p.NA(),
 		valid:     true,
+		blacklist: false,
 		lastTried: time.Now(),
+	}
+
+	if s.alreadyKnowsAddress(p.NA()) {
+		s.updateAddressState(newAddr)
+		return
 	}
 
 	s.logger.Printf("Adding %s to address list", p.Addr())
@@ -178,6 +187,10 @@ func (s *Seeder) Connect(addr, port string) error {
 	p, err := peer.NewOutboundPeer(s.config, connectionString)
 	if err != nil {
 		return errors.Wrap(err, "constructing outbound peer")
+	}
+
+	if s.isBlacklistedAddress(p.NA()) {
+		return ErrBlacklistedPeer
 	}
 
 	_, alreadyPending := s.pendingPeers.Load(p.Addr())
@@ -382,6 +395,20 @@ func (s *Seeder) isBlacklistedAddress(na *wire.NetAddress) bool {
 	return false
 }
 
+func (s *Seeder) updateAddressState(update *Address) {
+	s.addrState.Lock()
+	defer s.addrState.Unlock()
+
+	for i := 0; i < len(s.addrList); i++ {
+		if s.addrList[i].String() == update.String() {
+			s.addrList[i].valid = update.valid
+			s.addrList[i].blacklist = update.blacklist
+			s.addrList[i].lastTried = update.lastTried
+			return
+		}
+	}
+}
+
 func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 	if len(msg.AddrList) == 0 {
 		s.logger.Printf("Got empty addr message from peer %s. Disconnecting.", p.Addr())
@@ -414,7 +441,19 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 			err := s.Connect(na.IP.String(), portString)
 
 			if err != nil {
-				s.logger.Printf("Got unusable peer %s:%d from peer %s. Error: ", na.IP, na.Port, p.Addr(), err)
+				s.logger.Printf("Got unusable peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
+
+				// Mark previously-known peers as invalid
+				newAddr := &Address{
+					netaddr:   p.NA(),
+					valid:     false,
+					lastTried: time.Now(),
+				}
+
+				if s.alreadyKnowsAddress(p.NA()) {
+					s.updateAddressState(newAddr)
+				}
+
 				return
 			}
 
