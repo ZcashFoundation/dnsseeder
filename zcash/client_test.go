@@ -39,9 +39,15 @@ func startMockLoop() {
 			time.Now(),
 			0,
 			net.ParseIP("127.0.0.1"),
-			uint16(8233),
+			uint16(18233),
 		)
-		cache = append(cache, addr)
+		addr2 := wire.NewNetAddressTimestamp(
+			time.Now(),
+			0,
+			net.ParseIP("127.0.0.1"),
+			uint16(18344),
+		)
+		cache = append(cache, addr, addr2)
 		_, err := p.PushAddrMsg(cache)
 		if err != nil {
 			mockPeerLogger.Error(err)
@@ -154,5 +160,8 @@ func TestRequestAddresses(t *testing.T) {
 	}
 
 	regSeeder.RequestAddresses()
-	regSeeder.WaitForMoreAddresses()
+	regSeeder.WaitForAddresses(1)
+
+	// TODO It isn't possible to test this wait on a local mock peer without
+	// carving a path through absolutely all of the bad connection logic.
 }
