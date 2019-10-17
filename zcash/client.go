@@ -216,8 +216,7 @@ func (s *Seeder) Connect(addr, port string) error {
 		return ErrRepeatConnection
 	}
 
-	// TODO time out
-	conn, err := net.Dial("tcp", p.Addr())
+	conn, err := net.DialTimeout("tcp", p.Addr(), 1*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "dialing new peer address")
 	}
@@ -234,8 +233,8 @@ func (s *Seeder) Connect(addr, port string) error {
 		s.logger.Printf("Handshake completed with new peer %s", p.Addr())
 		s.handshakeSignals.Delete(p.Addr())
 		return nil
-	case <-time.After(time.Second * 1):
-		return errors.New("peer handshake timed out")
+	case <-time.After(1 * time.Second):
+		return errors.New("peer handshake started but timed out")
 	}
 
 	panic("This should be unreachable")
