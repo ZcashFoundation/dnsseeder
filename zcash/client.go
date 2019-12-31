@@ -4,11 +4,9 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/addrmgr"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
 
@@ -20,7 +18,7 @@ import (
 var (
 	ErrRepeatConnection = errors.New("attempted repeat connection to existing peer")
 	ErrNoSuchPeer       = errors.New("no record of requested peer")
-	ErrAddressTimeout   = errors.New("wait for addreses timed out")
+	ErrAddressTimeout   = errors.New("wait for addresses timed out")
 	ErrBlacklistedPeer  = errors.New("peer is blacklisted")
 )
 
@@ -77,8 +75,9 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		return nil, errors.Wrap(err, "could not construct seeder")
 	}
 
-	sink, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0666)
-	logger := log.New(sink, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
+	// sink, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0666)
+	// logger := log.New(sink, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
+	logger := log.New(os.Stdout, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
 
 	// Allows connections to self for easy mocking
 	config.AllowSelfConns = true
@@ -120,46 +119,7 @@ func (s *Seeder) GetNetworkDefaultPort() string {
 	return s.config.ChainParams.DefaultPort
 }
 
-func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
-	// Check if we're expecting to hear from this peer
-	_, ok := s.pendingPeers.Load(peerKeyFromPeer(p))
-
-	if !ok {
-		s.logger.Printf("Got verack from unexpected peer %s", p.Addr())
-		return
-	}
-
-	// Add to set of live peers
-	s.livePeers.Store(peerKeyFromPeer(p), p)
-
-	// Remove from set of pending peers
-	s.pendingPeers.Delete(peerKeyFromPeer(p))
-
-	// Signal successful connection
-	if signal, ok := s.handshakeSignals.Load(p.Addr()); ok {
-		signal.(chan struct{}) <- struct{}{}
-	} else {
-		s.logger.Printf("Got verack from peer without a callback channel: %s", p.Addr())
-		s.DisconnectPeer(peerKeyFromPeer(p))
-		return
-	}
-
-	// Add to list of known good addresses if we don't already have it.
-	// Otherwise, update the last-valid time.
-
-	if s.addrBook.AlreadyKnowsAddress(p.NA()) {
-		newAddr := NewAddress(p.NA())
-		s.updateAddressState(newAddr)
-		return
-	}
-
-	s.logger.Printf("Adding %s to address list", p.Addr())
-
-	s.addrBook.Add(newAddr)
-	return
-}
-
-// ConnectToPeer attempts to connect to a peer on the default port at the
+// ConnectOnDefaultPort attempts to connect to a peer on the default port at the
 // specified address. It returns an error if it can't complete handshake with
 // the peer. Otherwise it returns nil and adds the peer to the list of live
 // connections and known-good addresses.
@@ -185,16 +145,14 @@ func (s *Seeder) Connect(addr, port string) error {
 	if alreadyPending {
 		s.logger.Printf("Peer is already pending: %s", p.Addr())
 		return ErrRepeatConnection
-	} else {
-		s.pendingPeers.Store(peerKeyFromPeer(p), p)
 	}
+	s.pendingPeers.Store(peerKeyFromPeer(p), p)
 
 	if alreadyHandshaking {
 		s.logger.Printf("Peer is already handshaking: %s", p.Addr())
 		return ErrRepeatConnection
-	} else {
-		s.handshakeSignals.Store(p.Addr(), make(chan struct{}, 1))
 	}
+	s.handshakeSignals.Store(p.Addr(), make(chan struct{}, 1))
 
 	if alreadyLive {
 		s.logger.Printf("Peer is already live: %s", p.Addr())
@@ -231,7 +189,7 @@ func (s *Seeder) GetPeer(addr PeerKey) (*peer.Peer, error) {
 	p, ok := s.livePeers.Load(addr)
 
 	if ok {
-		return p.(*peer.Peer), nil
+		return p, nil
 	}
 
 	return nil, ErrNoSuchPeer
@@ -287,7 +245,7 @@ func (s *Seeder) DisconnectAllPeers() {
 	})
 
 	s.livePeers.Range(func(key PeerKey, p *peer.Peer) bool {
-		s.DisconnectPeer(p.Addr())
+		s.DisconnectPeer(key)
 		return true
 	})
 }
@@ -303,86 +261,13 @@ func (s *Seeder) RequestAddresses() {
 // WaitForAddresses waits for n addresses to be received and their initial
 // connection attempts to resolve. There is no escape if that does not happen -
 // this is intended for test runners.
-func (s *Seeder) WaitForAddresses(n int) error {
-	s.addrState.Lock()
-	for {
-		addrCount := len(s.addrList)
-		if addrCount < n {
-			s.addrRecvCond.Wait()
-		} else {
-			break
-		}
-	}
-	s.addrState.Unlock()
-	return nil
-}
-
-func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
-	if len(msg.AddrList) == 0 {
-		s.logger.Printf("Got empty addr message from peer %s. Disconnecting.", p.Addr())
-		s.DisconnectPeer(p.Addr())
-		return
-	}
-
-	s.logger.Printf("Got %d addrs from peer %s", len(msg.AddrList), p.Addr())
-
-	queue := make(chan *wire.NetAddress, len(msg.AddrList))
-
-	for _, na := range msg.AddrList {
-		queue <- na
-	}
-
-	for i := 0; i < 32; i++ {
-		go func() {
-			var na *wire.NetAddress
-			for {
-				select {
-				case next := <-queue:
-					na = next
-				case <-time.After(1 * time.Second):
-					return
-				}
-
-				if !addrmgr.IsRoutable(na) && !s.config.AllowSelfConns {
-					s.logger.Printf("Got bad addr %s:%d from peer %s", na.IP, na.Port, p.Addr())
-					s.DisconnectPeerDishonorably(p.Addr())
-					continue
-				}
-
-				if s.addrBook.AlreadyKnowsAddress(na) {
-					s.logger.Printf("Already knew about address %s:%d", na.IP, na.Port)
-					continue
-				}
-
-				if s.addrBook.IsBlacklistedAddress(na) {
-					s.logger.Printf("Address %s:%d is blacklisted", na.IP, na.Port)
-					continue
-				}
-
-				portString := strconv.Itoa(int(na.Port))
-				err := s.Connect(na.IP.String(), portString)
-
-				if err != nil {
-					s.logger.Printf("Got unusable peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
-
-					// Mark previously-known peers as invalid
-					newAddr := &Address{
-						netaddr:   p.NA(),
-						valid:     false,
-						lastTried: time.Now(),
-					}
-
-					if s.alreadyKnowsAddress(p.NA()) {
-						s.updateAddressState(newAddr)
-					}
-					continue
-				}
-
-				peerString := net.JoinHostPort(na.IP.String(), portString)
-				s.DisconnectPeer(peerString)
-
-				s.addrRecvCond.Broadcast()
-			}
-		}()
+func (s *Seeder) WaitForAddresses(n int, timeout time.Duration) error {
+	done := make(chan struct{})
+	go s.addrBook.waitForAddresses(n, done)
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return ErrAddressTimeout
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-// The "host:port" format used throughout our maps and lists.
+// PeerKey is a convenient marker type for the "host:port" format used throughout our maps and lists.
 type PeerKey string
 
 func peerKeyFromPeer(p *peer.Peer) PeerKey {
@@ -40,7 +40,7 @@ func (pm *PeerMap) Load(key PeerKey) (*peer.Peer, bool) {
 	v, mapOk := pm.m.Load(key)
 	if mapOk {
 		p, typeOk := v.(*peer.Peer)
-		if typeOK {
+		if typeOk {
 			return p, true
 		}
 	}
@@ -77,5 +77,12 @@ func (pm *PeerMap) Delete(key PeerKey) {
 // Range may be O(N) with the number of elements in the map even if f returns
 // false after a constant number of calls.
 func (pm *PeerMap) Range(f func(key PeerKey, value *peer.Peer) bool) {
-	pm.m.Range(f)
+
+	// TODO: gaaaaaah
+	fUntyped := func(untypedKey, untypedValue interface{}) bool {
+		typedKey, _ := untypedKey.(PeerKey)
+		typedValue, _ := untypedValue.(*peer.Peer)
+		return f(typedKey, typedValue)
+	}
+	pm.m.Range(fUntyped)
 }

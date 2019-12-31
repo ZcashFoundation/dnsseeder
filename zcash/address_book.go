@@ -16,6 +16,8 @@ type Address struct {
 	lastTried time.Time
 }
 
+// NewAddress returns a new address that is marked valid, not blacklisted, and
+// last tried at time.Now().
 func NewAddress(na *wire.NetAddress) *Address {
 	return &Address{
 		netaddr:   na,
@@ -56,6 +58,8 @@ func (bk *AddressBook) Add(newAddr *Address) {
 	bk.addrState.Lock()
 	bk.addrList = append(bk.addrList, newAddr)
 	bk.addrState.Unlock()
+
+	bk.addrRecvCond.Broadcast()
 }
 
 func (bk *AddressBook) Blacklist(addr PeerKey) {
@@ -99,7 +103,7 @@ func (bk *AddressBook) IsBlacklistedAddress(na *wire.NetAddress) bool {
 	return false
 }
 
-func (bk *AddressBook) UpdateAddressState(update *Address) {
+func (bk *AddressBook) UpdateAddressStateFromTemplate(update *Address) {
 	bk.addrState.Lock()
 	defer bk.addrState.Unlock()
 
@@ -119,6 +123,24 @@ func NewAddressBook(capacity int) *AddressBook {
 	}
 	addrBook.addrRecvCond = sync.NewCond(&addrBook.addrState)
 	return addrBook
+}
+
+// WaitForAddresses waits for n addresses to be received and their initial
+// connection attempts to resolve. There is no escape if that does not happen -
+// this is intended for test runners or goroutines with a timeout.
+func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
+	bk.addrState.Lock()
+	for {
+		addrCount := len(bk.addrList)
+		if addrCount < n {
+			bk.addrRecvCond.Wait()
+		} else {
+			break
+		}
+	}
+	bk.addrState.Unlock()
+	done <- struct{}{}
+	return
 }
 
 // GetShuffledAddressList returns a slice of n valid addresses in random order.

@@ -155,13 +155,18 @@ func TestRequestAddresses(t *testing.T) {
 
 	err = regSeeder.ConnectOnDefaultPort("127.0.0.1")
 	if err != nil {
-		t.Error(err)
-		return
+		t.Fatal(err)
 	}
 
 	regSeeder.RequestAddresses()
-	regSeeder.WaitForAddresses(1)
+	err = regSeeder.WaitForAddresses(1, 1*time.Second)
 
-	// TODO It isn't possible to test this wait on a local mock peer without
-	// carving a path through absolutely all of the bad connection logic.
+	if err != nil {
+		t.Errorf("Error getting one mocked address: %v", err)
+	}
+
+	err = regSeeder.WaitForAddresses(500, 1*time.Second)
+	if err != ErrAddressTimeout {
+		t.Errorf("Should have timed out, instead got: %v", err)
+	}
 }
