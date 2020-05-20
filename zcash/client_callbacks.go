@@ -1,11 +1,6 @@
 package zcash
 
 import (
-	"runtime"
-	"strconv"
-	"time"
-
-	"github.com/btcsuite/btcd/addrmgr"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
 )
@@ -54,67 +49,9 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 
 	s.logger.Printf("Got %d addrs from peer %s", len(msg.AddrList), p.Addr())
 
-	queue := make(chan *wire.NetAddress, len(msg.AddrList))
+	//queue := make(chan *wire.NetAddress, len(msg.AddrList))
 
 	for _, na := range msg.AddrList {
-		queue <- na
-	}
-
-	for i := 0; i < runtime.NumCPU()*2; i++ {
-		go func() {
-			var na *wire.NetAddress
-			for {
-				select {
-				case next := <-queue:
-					// Pull the next address off the queue
-					na = next
-				case <-time.After(1 * time.Second):
-					// Or die if there wasn't one
-					return
-				}
-
-				// Note that AllowSelfConns is only exposed in a fork of btcd
-				// pending https://github.com/btcsuite/btcd/pull/1481, which
-				// is why the module `replace`s btcd.
-				if !addrmgr.IsRoutable(na) && !s.config.AllowSelfConns {
-					s.logger.Printf("Got bad addr %s:%d from peer %s", na.IP, na.Port, p.Addr())
-					s.DisconnectAndBlacklist(peerKeyFromPeer(p))
-					continue
-				}
-
-				potentialPeer := peerKeyFromNA(na)
-
-				if s.addrBook.IsKnown(potentialPeer) {
-					s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
-					continue
-				}
-
-				if s.addrBook.IsBlacklisted(potentialPeer) {
-					s.logger.Printf("Previously blacklisted %s:%d", na.IP, na.Port)
-					continue
-				}
-
-				portString := strconv.Itoa(int(na.Port))
-				err := s.Connect(na.IP.String(), portString)
-
-				if err != nil {
-					if err == ErrRepeatConnection {
-						s.logger.Printf("Got duplicate peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
-						continue
-					}
-
-					// Blacklist the potential peer. We might try to connect again later,
-					// since we assume IsRoutable filtered out the truly wrong ones.
-					s.logger.Printf("Got unusable peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
-					s.addrBook.Blacklist(potentialPeer)
-					continue
-				}
-
-				s.DisconnectPeer(potentialPeer)
-
-				s.logger.Printf("Successfully learned about %s:%d from %s.", na.IP, na.Port, p.Addr())
-				s.addrBook.Add(potentialPeer)
-			}
-		}()
+		s.addrQueue <- na
 	}
 }
