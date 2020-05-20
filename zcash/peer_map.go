@@ -12,6 +12,10 @@ import (
 // PeerKey is a convenient marker type for the "host:port" format used throughout our maps and lists.
 type PeerKey string
 
+func (p PeerKey) String() string {
+	return string(p)
+}
+
 func peerKeyFromPeer(p *peer.Peer) PeerKey {
 	return PeerKey(p.Addr())
 }

@@ -31,6 +31,13 @@ var defaultPeerConfig = &peer.Config{
 	ProtocolVersion:  170009, // Blossom
 }
 
+// The minimum number of addresses we need to know about to begin serving introductions.
+const minimumReadyAddresses = 10
+
+// The maximum amount of time we will wait for a peer to complete the initial handshake.
+const maximumHandshakeWait = 1 * time.Second
+
+// Seeder contains all of the state and configuration needed to request addresses from Zcash peers and present them to a DNS provider.
 type Seeder struct {
 	peer   *peer.Peer
 	config *peer.Config
@@ -60,7 +67,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		handshakeSignals: new(sync.Map),
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
-		addrBook:         NewAddressBook(1000),
+		addrBook:         NewAddressBook(),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -88,7 +95,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		handshakeSignals: new(sync.Map),
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
-		addrBook:         NewAddressBook(1000),
+		addrBook:         NewAddressBook(),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -134,25 +141,28 @@ func (s *Seeder) Connect(addr, port string) error {
 		return errors.Wrap(err, "constructing outbound peer")
 	}
 
-	if s.addrBook.IsBlacklistedAddress(p.NA()) {
+	// PeerKeys are used in our internal maps to keep signals and responses from specific peers straight.
+	pk := peerKeyFromPeer(p)
+
+	if s.addrBook.IsBlacklisted(pk) {
 		return ErrBlacklistedPeer
 	}
 
-	_, alreadyPending := s.pendingPeers.Load(peerKeyFromPeer(p))
-	_, alreadyHandshaking := s.handshakeSignals.Load(peerKeyFromPeer(p))
-	_, alreadyLive := s.livePeers.Load(peerKeyFromPeer(p))
+	_, alreadyPending := s.pendingPeers.Load(pk)
+	_, alreadyHandshaking := s.handshakeSignals.Load(pk)
+	_, alreadyLive := s.livePeers.Load(pk)
 
 	if alreadyPending {
 		s.logger.Printf("Peer is already pending: %s", p.Addr())
 		return ErrRepeatConnection
 	}
-	s.pendingPeers.Store(peerKeyFromPeer(p), p)
+	s.pendingPeers.Store(pk, p)
 
 	if alreadyHandshaking {
 		s.logger.Printf("Peer is already handshaking: %s", p.Addr())
 		return ErrRepeatConnection
 	}
-	s.handshakeSignals.Store(p.Addr(), make(chan struct{}, 1))
+	s.handshakeSignals.Store(pk, make(chan struct{}, 1))
 
 	if alreadyLive {
 		s.logger.Printf("Peer is already live: %s", p.Addr())
@@ -168,15 +178,15 @@ func (s *Seeder) Connect(addr, port string) error {
 	s.logger.Printf("Handshake initated with new peer %s", p.Addr())
 	p.AssociateConnection(conn)
 
-	// TODO: handle disconnect during this
-	handshakeChan, _ := s.handshakeSignals.Load(p.Addr())
+	// Wait for
+	handshakeChan, _ := s.handshakeSignals.Load(pk)
 
 	select {
 	case <-handshakeChan.(chan struct{}):
 		s.logger.Printf("Handshake completed with new peer %s", p.Addr())
-		s.handshakeSignals.Delete(p.Addr())
+		s.handshakeSignals.Delete(pk)
 		return nil
-	case <-time.After(1 * time.Second):
+	case <-time.After(maximumHandshakeWait):
 		return errors.New("peer handshake started but timed out")
 	}
 
@@ -211,11 +221,11 @@ func (s *Seeder) DisconnectPeer(addr PeerKey) error {
 	return nil
 }
 
-// DisconnectPeerDishonorably disconnects from a live peer identified by
+// DisconnectAndBlacklist disconnects from a live peer identified by
 // "host:port" string. It returns an error if we aren't connected to that peer.
-// "Dishonorably" furthermore removes this peer from the list of known good
-// addresses and adds them to a blacklist.
-func (s *Seeder) DisconnectPeerDishonorably(addr PeerKey) error {
+// It furthermore removes this peer from the list of known good
+// addresses and adds them to a blacklist. to prevent future connections.
+func (s *Seeder) DisconnectAndBlacklist(addr PeerKey) error {
 	p, ok := s.livePeers.Load(addr)
 
 	if !ok {
@@ -250,6 +260,7 @@ func (s *Seeder) DisconnectAllPeers() {
 	})
 }
 
+// RequestAddresses sends a request for more addresses to every peer we're connected to.
 func (s *Seeder) RequestAddresses() {
 	s.livePeers.Range(func(key PeerKey, p *peer.Peer) bool {
 		s.logger.Printf("Requesting addresses from peer %s", p.Addr())
@@ -258,9 +269,7 @@ func (s *Seeder) RequestAddresses() {
 	})
 }
 
-// WaitForAddresses waits for n addresses to be received and their initial
-// connection attempts to resolve. There is no escape if that does not happen -
-// this is intended for test runners.
+// WaitForAddresses waits for n addresses to be confirmed and available in the address book.
 func (s *Seeder) WaitForAddresses(n int, timeout time.Duration) error {
 	done := make(chan struct{})
 	go s.addrBook.waitForAddresses(n, done)
@@ -274,6 +283,7 @@ func (s *Seeder) WaitForAddresses(n int, timeout time.Duration) error {
 
 // Ready reports if the seeder is ready to provide addresses.
 func (s *Seeder) Ready() bool {
-	// TODO report ready when we have some addresses
-	return false
+	return s.WaitForAddresses(minimumReadyAddresses, 1*time.Millisecond) == nil
 }
+
+//func (s *Seeder) Addresses(count int) []

@@ -10,29 +10,9 @@ import (
 )
 
 type Address struct {
-	netaddr   *wire.NetAddress
-	valid     bool
-	blacklist bool
-	lastTried time.Time
-}
-
-// NewAddress returns a new address that is marked valid, not blacklisted, and
-// last tried at time.Now().
-func NewAddress(na *wire.NetAddress) *Address {
-	return &Address{
-		netaddr:   na,
-		valid:     true,
-		blacklist: false,
-		lastTried: time.Now(),
-	}
-}
-
-func (a *Address) IsGood() bool {
-	return a.valid && !a.blacklist
-}
-
-func (a *Address) IsBad() bool {
-	return a.blacklist
+	netaddr     *wire.NetAddress
+	blacklisted bool
+	lastUpdate  time.Time
 }
 
 func (a *Address) String() string {
@@ -44,85 +24,132 @@ func (a *Address) asPeerKey() PeerKey {
 	return PeerKey(a.String())
 }
 
+func (a *Address) fromPeerKey(s PeerKey) (*Address, error) {
+	host, portString, err := net.SplitHostPort(s.String())
+	if err != nil {
+		return nil, err
+	}
+
+	portInt, err := strconv.ParseUint(portString, 10, 16)
+	if err != nil {
+		return nil, err
+	}
+
+	na := wire.NewNetAddressTimestamp(
+		time.Now(),
+		0,
+		net.ParseIP(host),
+		uint16(portInt),
+	)
+
+	a.netaddr = na
+	a.blacklisted = false
+	a.lastUpdate = na.Timestamp
+	return a, nil
+}
+
+func (a *Address) asNetAddress() *wire.NetAddress {
+	newNA := *a.netaddr
+	newNA.Timestamp = a.lastUpdate
+	return &newNA
+}
+
+func (a *Address) fromNetAddress(na *wire.NetAddress) (*Address, error) {
+	a.netaddr = na
+	a.blacklisted = false
+	a.lastUpdate = na.Timestamp
+	return a, nil
+}
+
 func (a *Address) MarshalText() (text []byte, err error) {
 	return []byte(a.String()), nil
 }
 
 type AddressBook struct {
-	addrList     []*Address
+	addrs        map[PeerKey]*Address
 	addrState    sync.RWMutex
 	addrRecvCond *sync.Cond
 }
 
-func (bk *AddressBook) Add(newAddr *Address) {
-	bk.addrState.Lock()
-	bk.addrList = append(bk.addrList, newAddr)
-	bk.addrState.Unlock()
-
-	bk.addrRecvCond.Broadcast()
-}
-
-func (bk *AddressBook) Blacklist(addr PeerKey) {
-	bk.addrState.Lock()
-	for i := 0; i < len(bk.addrList); i++ {
-		address := bk.addrList[i]
-		if address.asPeerKey() == addr {
-			address.valid = false
-			address.blacklist = true
-		}
-	}
-	bk.addrState.Unlock()
-}
-
-func (bk *AddressBook) AlreadyKnowsAddress(na *wire.NetAddress) bool {
-	bk.addrState.RLock()
-	defer bk.addrState.RUnlock()
-
-	addr := NewAddress(na)
-
-	for i := 0; i < len(bk.addrList); i++ {
-		if bk.addrList[i].String() == addr.String() {
-			return true
-		}
-	}
-	return false
-}
-
-func (bk *AddressBook) IsBlacklistedAddress(na *wire.NetAddress) bool {
-	bk.addrState.RLock()
-	defer bk.addrState.RUnlock()
-
-	ref := NewAddress(na)
-
-	for i := 0; i < len(bk.addrList); i++ {
-		if bk.addrList[i].String() == ref.String() {
-			return bk.addrList[i].IsBad()
-		}
-	}
-
-	return false
-}
-
-func (bk *AddressBook) UpdateAddressStateFromTemplate(update *Address) {
-	bk.addrState.Lock()
-	defer bk.addrState.Unlock()
-
-	for i := 0; i < len(bk.addrList); i++ {
-		if bk.addrList[i].String() == update.String() {
-			bk.addrList[i].valid = update.valid
-			bk.addrList[i].blacklist = update.blacklist
-			bk.addrList[i].lastTried = update.lastTried
-			return
-		}
-	}
-}
-
-func NewAddressBook(capacity int) *AddressBook {
+func NewAddressBook() *AddressBook {
 	addrBook := &AddressBook{
-		addrList: make([]*Address, 0, capacity),
+		addrs: make(map[PeerKey]*Address),
 	}
 	addrBook.addrRecvCond = sync.NewCond(&addrBook.addrState)
 	return addrBook
+}
+
+func (bk *AddressBook) Add(s PeerKey) {
+	newAddr, err := (&Address{}).fromPeerKey(s)
+	if err != nil {
+		// XXX effectively NOP bogus peer strings
+		return
+	}
+
+	bk.addrState.Lock()
+	bk.addrs[s] = newAddr
+	bk.addrState.Unlock()
+
+	// Wake anyone who was waiting on us to receive an address.
+	bk.addrRecvCond.Broadcast()
+}
+
+func (bk *AddressBook) Remove(s PeerKey) {
+	bk.addrState.Lock()
+	defer bk.addrState.Unlock()
+
+	if _, ok := bk.addrs[s]; ok {
+		delete(bk.addrs, s)
+	}
+}
+
+func (bk *AddressBook) Blacklist(s PeerKey) {
+	bk.addrState.Lock()
+	defer bk.addrState.Unlock()
+
+	if target, ok := bk.addrs[s]; ok {
+		target.blacklisted = true
+		target.lastUpdate = time.Now()
+	} else {
+		// Create a new Address just to be blacklisted
+		addr, err := (&Address{}).fromPeerKey(s)
+		if err != nil {
+			// XXX effectively NOP bogus peer strings
+			return
+		}
+		addr.blacklisted = true
+		bk.addrs[s] = addr
+	}
+}
+
+// Touch updates the last-seen timestamp if the peer is in the address book or does nothing if not.
+func (bk *AddressBook) Touch(s PeerKey) {
+	bk.addrState.Lock()
+	defer bk.addrState.Unlock()
+
+	if target, ok := bk.addrs[s]; ok {
+		target.lastUpdate = time.Now()
+	}
+}
+
+// IsKnown returns true if the peer is already in our address book, false if not.
+func (bk *AddressBook) IsKnown(s PeerKey) bool {
+	bk.addrState.RLock()
+	defer bk.addrState.RUnlock()
+
+	_, known := bk.addrs[s]
+	return known
+}
+
+func (bk *AddressBook) IsBlacklisted(s PeerKey) bool {
+	bk.addrState.RLock()
+	defer bk.addrState.RUnlock()
+
+	if target, ok := bk.addrs[s]; ok {
+		return target.blacklisted
+	}
+
+	return false
 }
 
 // WaitForAddresses waits for n addresses to be received and their initial
@@ -131,7 +158,7 @@ func NewAddressBook(capacity int) *AddressBook {
 func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
 	bk.addrState.Lock()
 	for {
-		addrCount := len(bk.addrList)
+		addrCount := len(bk.addrs)
 		if addrCount < n {
 			bk.addrRecvCond.Wait()
 		} else {
@@ -144,4 +171,6 @@ func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
 }
 
 // GetShuffledAddressList returns a slice of n valid addresses in random order.
-func (ab *AddressBook) GetShuffledAddressList(n int) []*Address { return nil }
+// func (bk *AddressBook) GetShuffledAddressList(n int) []*Address {
+
+// }
