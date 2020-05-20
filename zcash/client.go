@@ -271,3 +271,9 @@ func (s *Seeder) WaitForAddresses(n int, timeout time.Duration) error {
 		return ErrAddressTimeout
 	}
 }
+
+// Ready reports if the seeder is ready to provide addresses.
+func (s *Seeder) Ready() bool {
+	// TODO report ready when we have some addresses
+	return false
+}
