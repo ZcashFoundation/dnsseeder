@@ -1,6 +1,7 @@
 package zcash
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -14,16 +15,20 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	startMockLoop()
+	err := startMockLoop()
+	if err != nil {
+		fmt.Printf("Failed to start mock loop!")
+		os.Exit(1)
+	}
 	exitCode := m.Run()
 	os.Exit(exitCode)
 }
 
-func startMockLoop() {
+func startMockLoop() error {
 	// Configure peer to act as a regtest node that offers no services.
 	config, err := newSeederPeerConfig(network.Regtest, defaultPeerConfig)
 	if err != nil {
-		return
+		return err
 	}
 
 	config.AllowSelfConns = true
@@ -35,34 +40,50 @@ func startMockLoop() {
 
 	config.Listeners.OnGetAddr = func(p *peer.Peer, msg *wire.MsgGetAddr) {
 		cache := make([]*wire.NetAddress, 0, 1)
+
+		// This will an unusable peer (testnet port)
 		addr := wire.NewNetAddressTimestamp(
 			time.Now(),
 			0,
 			net.ParseIP("127.0.0.1"),
 			uint16(18233),
 		)
+
+		// This will be an unusable peer (bs port)
 		addr2 := wire.NewNetAddressTimestamp(
 			time.Now(),
 			0,
 			net.ParseIP("127.0.0.1"),
-			uint16(18344),
+			uint16(31337),
 		)
-		cache = append(cache, addr, addr2)
+
+		// This will be a usable peer, corresponding to our second listener.
+		addr3 := wire.NewNetAddressTimestamp(
+			time.Now(),
+			0,
+			net.ParseIP("127.0.0.1"),
+			uint16(12345),
+		)
+
+		cache = append(cache, addr, addr2, addr3)
 		_, err := p.PushAddrMsg(cache)
 		if err != nil {
 			mockPeerLogger.Error(err)
 		}
 	}
 
-	listenAddr := net.JoinHostPort("127.0.0.1", config.ChainParams.DefaultPort)
-	listener, err := net.Listen("tcp", listenAddr)
+	listener1, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", config.ChainParams.DefaultPort))
 	if err != nil {
-		return
+		return err
+	}
+	listener2, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", "12345"))
+	if err != nil {
+		return err
 	}
 
 	go func() {
 		for {
-			conn, err := listener.Accept()
+			conn, err := listener1.Accept()
 			if err != nil {
 				return
 			}
@@ -71,6 +92,21 @@ func startMockLoop() {
 			mockPeer.AssociateConnection(conn)
 		}
 	}()
+
+	go func() {
+		for {
+			conn, err := listener2.Accept()
+			if err != nil {
+				return
+			}
+			defaultConfig, _ := newSeederPeerConfig(network.Regtest, defaultPeerConfig)
+			defaultConfig.AllowSelfConns = true
+			mockPeer := peer.NewInboundPeer(defaultConfig)
+			mockPeer.AssociateConnection(conn)
+		}
+	}()
+
+	return nil
 }
 
 func TestOutboundPeerSync(t *testing.T) {

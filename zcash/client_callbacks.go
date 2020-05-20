@@ -37,14 +37,9 @@ func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
 		return
 	}
 
-	// Add to list of known good addresses if we don't already have it.
-	// Otherwise, update the last-valid time.
-
+	// If we've already connected to this peer, update the last-valid time.
 	if s.addrBook.IsKnown(pk) {
 		s.addrBook.Touch(pk)
-	} else {
-		s.logger.Printf("Adding %s to address list", pk)
-		s.addrBook.Add(pk)
 	}
 
 	return
@@ -103,15 +98,21 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 				err := s.Connect(na.IP.String(), portString)
 
 				if err != nil {
-					s.logger.Printf("Got unusable peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
+					if err == ErrRepeatConnection {
+						s.logger.Printf("Got duplicate peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
+						continue
+					}
 
 					// Blacklist the potential peer. We might try to connect again later,
 					// since we assume IsRoutable filtered out the truly wrong ones.
+					s.logger.Printf("Got unusable peer %s:%d from peer %s. Error: %s", na.IP, na.Port, p.Addr(), err)
 					s.addrBook.Blacklist(potentialPeer)
 					continue
 				}
 
 				s.DisconnectPeer(potentialPeer)
+
+				s.logger.Printf("Successfully learned about %s:%d from %s.", na.IP, na.Port, p.Addr())
 				s.addrBook.Add(potentialPeer)
 			}
 		}()
