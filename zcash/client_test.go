@@ -10,7 +10,7 @@ import (
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog"
-	"github.com/gtank/coredns-zcash/zcash/network"
+	"github.com/zcashfoundation/dnsseeder/zcash/network"
 )
 
 func TestMain(m *testing.M) {
