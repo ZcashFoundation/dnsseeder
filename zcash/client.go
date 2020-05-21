@@ -358,3 +358,8 @@ func (s *Seeder) WaitForAddresses(n int, timeout time.Duration) error {
 func (s *Seeder) Ready() bool {
 	return s.WaitForAddresses(minimumReadyAddresses, 1*time.Millisecond) == nil
 }
+
+// Addresses returns a slice of n addresses or as many as we have if it's less than that.
+func (s *Seeder) Addresses(n int) []net.IP {
+	return s.addrBook.shuffleAddressList(n)
+}

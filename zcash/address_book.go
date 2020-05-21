@@ -1,6 +1,7 @@
 package zcash
 
 import (
+	mrand "math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -170,7 +171,30 @@ func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
 	return
 }
 
-// GetShuffledAddressList returns a slice of n valid addresses in random order.
-// func (bk *AddressBook) GetShuffledAddressList(n int) []*Address {
+// GetAddressList returns a slice of n valid addresses in random order.
+// If there aren't enough known addresses, it returns as many as we have.
+func (bk *AddressBook) shuffleAddressList(n int) []net.IP {
+	bk.addrState.RLock()
+	defer bk.addrState.RUnlock()
 
-// }
+	resp := make([]net.IP, 0, len(bk.addrs))
+
+	for _, v := range bk.addrs {
+		if v.blacklisted {
+			continue
+		}
+
+		resp = append(resp, v.netaddr.IP)
+	}
+
+	mrand.Seed(time.Now().UnixNano())
+	mrand.Shuffle(len(resp), func(i, j int) {
+		resp[i], resp[j] = resp[j], resp[i]
+	})
+
+	if len(resp) > n {
+		return resp[:n]
+	}
+
+	return resp
+}

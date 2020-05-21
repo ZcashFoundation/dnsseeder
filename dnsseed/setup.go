@@ -2,6 +2,7 @@ package dnsseed
 
 import (
 	"net"
+	"time"
 
 	"github.com/caddyserver/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
@@ -12,18 +13,21 @@ import (
 	"github.com/zcashfoundation/dnsseeder/zcash/network"
 )
 
-var log = clog.NewWithPlugin("dnsseed")
+var (
+	log            = clog.NewWithPlugin("dnsseed")
+	updateInterval = 15 * time.Minute
+)
 
 func init() { plugin.Register("dnsseed", setup) }
 
 // setup is the function that gets called when the config parser see the token "dnsseed". Setup is responsible
 // for parsing any extra options the example plugin may have. The first token this function sees is "dnsseed".
 func setup(c *caddy.Controller) error {
-	var networkArg, hostArg string
+	var zoneArg, networkArg, hostArg string
 
 	c.Next() // Ignore "dnsseed" and give us the next token.
 
-	if !c.Args(&networkArg, &hostArg) {
+	if !c.Args(&zoneArg, &networkArg, &hostArg) {
 		return plugin.Error("dnsseed", c.ArgErr())
 	}
 
@@ -49,17 +53,37 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error("dnsseed", err)
 	}
 
+	// Connect to the bootstrap peer
 	err = seeder.Connect(address, port)
 	if err != nil {
 		return plugin.Error("dnsseed", err)
 	}
 
-	// TODO: make initial addr request
-	// TODO: begin update timer
+	// Send the initial request for more addresses; spawns goroutines to process the responses.
+	// Ready() will flip to true once we've received and confirmed at least 10 peers.
+	seeder.RequestAddresses()
+
+	go func() {
+		for {
+			select {
+			case <-time.After(updateInterval):
+				seeder.RequestAddresses()
+				err := seeder.WaitForAddresses(10, 30*time.Second)
+				if err != nil {
+					log.Errorf("Failed to refresh addresses: %v", err)
+				}
+				// XXX: If we wanted to crawl independently, this would be the place.
+			}
+		}
+	}()
 
 	// Add the Plugin to CoreDNS, so Servers can use it in their plugin chain.
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
-		return ZcashSeeder{Next: next, seeder: seeder}
+		return ZcashSeeder{
+			Next:   next,
+			Zones:  []string{zoneArg},
+			seeder: seeder,
+		}
 	})
 
 	// All OK, return a nil error.
