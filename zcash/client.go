@@ -368,9 +368,14 @@ func (s *Seeder) Ready() bool {
 	return s.WaitForAddresses(minimumReadyAddresses, 1*time.Millisecond) == nil
 }
 
-// Addresses returns a slice of n addresses or as many as we have if it's less than that.
+// Addresses returns a slice of n IPv4 addresses or as many as we have if it's less than that.
 func (s *Seeder) Addresses(n int) []net.IP {
-	return s.addrBook.shuffleAddressList(n)
+	return s.addrBook.shuffleAddressList(n, false)
+}
+
+// AddressesV6 returns a slice of n IPv6 addresses or as many as we have if it's less than that.
+func (s *Seeder) AddressesV6(n int) []net.IP {
+	return s.addrBook.shuffleAddressList(n, true)
 }
 
 // testBlacklist adds a peer to the blacklist directly, for testing.

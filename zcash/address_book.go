@@ -169,7 +169,7 @@ func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
 
 // GetAddressList returns a slice of n valid addresses in random order.
 // If there aren't enough known addresses, it returns as many as we have.
-func (bk *AddressBook) shuffleAddressList(n int) []net.IP {
+func (bk *AddressBook) shuffleAddressList(n int, v6 bool) []net.IP {
 	bk.addrState.RLock()
 	defer bk.addrState.RUnlock()
 
@@ -177,6 +177,17 @@ func (bk *AddressBook) shuffleAddressList(n int) []net.IP {
 
 	for k, v := range bk.peers {
 		if _, blacklisted := bk.blacklist[k]; blacklisted {
+			// Check in case we've accidentally registered a bad peer
+			continue
+		}
+
+		if v6 && v.netaddr.IP.To4() != nil {
+			// skip IPv4 addresses if we're asked for v6
+			continue
+		}
+
+		if !v6 && v.netaddr.IP.To4() == nil {
+			// skip IPv6 addresses if we're asked for v4
 			continue
 		}
 

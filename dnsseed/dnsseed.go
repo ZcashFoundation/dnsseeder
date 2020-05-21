@@ -2,6 +2,7 @@ package dnsseed
 
 import (
 	"context"
+	"net"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/request"
@@ -34,7 +35,15 @@ func (zs ZcashSeeder) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns
 		return plugin.NextOrFailure(zs.Name(), zs.Next, ctx, w, r)
 	}
 
-	peerIPs := zs.seeder.Addresses(25)
+	var peerIPs []net.IP
+	switch state.QType() {
+	case dns.TypeA:
+		peerIPs = zs.seeder.Addresses(25)
+	case dns.TypeAAAA:
+		peerIPs = zs.seeder.AddressesV6(25)
+	default:
+		return dns.RcodeNotImplemented, nil
+	}
 
 	a := new(dns.Msg)
 	a.SetReply(r)
