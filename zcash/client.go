@@ -34,11 +34,19 @@ var defaultPeerConfig = &peer.Config{
 	ProtocolVersion:  170009, // Blossom
 }
 
-// The minimum number of addresses we need to know about to begin serving introductions.
-const minimumReadyAddresses = 10
+const (
+	// The minimum number of addresses we need to know about to begin serving introductions
+	minimumReadyAddresses = 10
 
-// The maximum amount of time we will wait for a peer to complete the initial handshake.
-const maximumHandshakeWait = 1 * time.Second
+	// The maximum amount of time we will wait for a peer to complete the initial handshake
+	maximumHandshakeWait = 1 * time.Second
+
+	// The timeout for the underlying dial to a peer
+	connectionDialTimeout = 1 * time.Second
+
+	// The amount of time crawler goroutines will wait for incoming addresses after a RequestAddresses()
+	crawlerThreadTimeout = 30 * time.Second
+)
 
 // Seeder contains all of the state and configuration needed to request addresses from Zcash peers and present them to a DNS provider.
 type Seeder struct {
@@ -74,7 +82,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress),
+		addrQueue:        make(chan *wire.NetAddress, 100),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -103,7 +111,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress),
+		addrQueue:        make(chan *wire.NetAddress, 100),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -177,7 +185,7 @@ func (s *Seeder) Connect(addr, port string) error {
 		return ErrRepeatConnection
 	}
 
-	conn, err := net.DialTimeout("tcp", p.Addr(), 1*time.Second)
+	conn, err := net.DialTimeout("tcp", p.Addr(), connectionDialTimeout)
 	if err != nil {
 		return errors.Wrap(err, "dialing new peer address")
 	}
@@ -282,7 +290,7 @@ func (s *Seeder) RequestAddresses() {
 	// GetAddr messages to briefly live trial connections without meaning to. It's
 	// meant to be run on a timer that takes longer to fire than it takes to check addresses.
 
-	for i := 0; i < runtime.NumCPU()*2; i++ {
+	for i := 0; i < runtime.NumCPU()*4; i++ {
 		go func() {
 			var na *wire.NetAddress
 			for {
@@ -290,8 +298,9 @@ func (s *Seeder) RequestAddresses() {
 				case next := <-s.addrQueue:
 					// Pull the next address off the queue
 					na = next
-				case <-time.After(1 * time.Second):
+				case <-time.After(crawlerThreadTimeout):
 					// Or die if there wasn't one
+					s.logger.Printf("Crawler thread timeout")
 					return
 				}
 
