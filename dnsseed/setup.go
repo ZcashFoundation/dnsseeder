@@ -1,6 +1,7 @@
 package dnsseed
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -23,11 +24,11 @@ func init() { plugin.Register("dnsseed", setup) }
 // setup is the function that gets called when the config parser see the token "dnsseed". Setup is responsible
 // for parsing any extra options the example plugin may have. The first token this function sees is "dnsseed".
 func setup(c *caddy.Controller) error {
-	var zoneArg, networkArg, hostArg string
+	var rootArg, networkArg, hostArg string
 
 	c.Next() // Ignore "dnsseed" and give us the next token.
 
-	if !c.Args(&zoneArg, &networkArg, &hostArg) {
+	if !c.Args(&rootArg, &networkArg, &hostArg) {
 		return plugin.Error("dnsseed", c.ArgErr())
 	}
 
@@ -40,6 +41,9 @@ func setup(c *caddy.Controller) error {
 	default:
 		return plugin.Error("dnsseed", c.Errf("Config error: expected {mainnet, testnet}, got %s", networkArg))
 	}
+
+	// Automatically configure the responsive zone by network
+	zone := fmt.Sprintf("%s.seeder.%s.", networkArg, rootArg)
 
 	address, port, err := net.SplitHostPort(hostArg)
 	if err != nil {
@@ -81,7 +85,7 @@ func setup(c *caddy.Controller) error {
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		return ZcashSeeder{
 			Next:   next,
-			Zones:  []string{zoneArg},
+			Zones:  []string{zone},
 			seeder: seeder,
 		}
 	})

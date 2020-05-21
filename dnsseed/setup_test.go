@@ -9,7 +9,7 @@ import (
 
 // TestSetup tests the various things that should be parsed by setup.
 func TestSetup(t *testing.T) {
-	c := caddy.NewTestController("dns", "dnsseed mainnet.seeder.yolo.money mainnet 127.0.0.1:8233")
+	c := caddy.NewTestController("dns", "dnsseed yolo.money mainnet 127.0.0.1:8233")
 	if err := setup(c); err != nil {
 		if strings.Contains(err.Error(), "connection refused") {
 			// No local peer running
