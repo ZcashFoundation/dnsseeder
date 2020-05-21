@@ -206,3 +206,29 @@ func TestRequestAddresses(t *testing.T) {
 		t.Errorf("Should have timed out, instead got: %v", err)
 	}
 }
+
+func TestBlacklist(t *testing.T) {
+	regSeeder, err := newTestSeeder(network.Regtest)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	err = regSeeder.ConnectOnDefaultPort("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	regSeeder.RequestAddresses()
+	err = regSeeder.WaitForAddresses(1, 1*time.Second)
+
+	if err != nil {
+		t.Errorf("Error getting one mocked address: %v", err)
+	}
+
+	regSeeder.testBlacklist(PeerKey("127.0.0.1:12345"))
+	err = regSeeder.Connect("127.0.0.1", "12345")
+	if err != ErrBlacklistedPeer {
+		t.Errorf("Blacklist did not prevent connection")
+	}
+}

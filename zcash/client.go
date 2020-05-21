@@ -372,3 +372,8 @@ func (s *Seeder) Ready() bool {
 func (s *Seeder) Addresses(n int) []net.IP {
 	return s.addrBook.shuffleAddressList(n)
 }
+
+// testBlacklist adds a peer to the blacklist directly, for testing.
+func (s *Seeder) testBlacklist(pk PeerKey) {
+	s.addrBook.Blacklist(pk)
+}
