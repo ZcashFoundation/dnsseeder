@@ -194,7 +194,7 @@ func TestRequestAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	regSeeder.RequestAddresses()
+	go regSeeder.RequestAddresses()
 	err = regSeeder.WaitForAddresses(1, 1*time.Second)
 
 	if err != nil {
@@ -219,7 +219,7 @@ func TestBlacklist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	regSeeder.RequestAddresses()
+	go regSeeder.RequestAddresses()
 	err = regSeeder.WaitForAddresses(1, 1*time.Second)
 
 	if err != nil {

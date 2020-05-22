@@ -122,7 +122,7 @@ func (bk *AddressBook) Blacklist(s PeerKey) {
 	}
 }
 
-// Touch updates the last-seen timestamp if the peer is in the address book or does nothing if not.
+// Touch updates the last-seen timestamp if the peer is in the valid address book or does nothing if not.
 func (bk *AddressBook) Touch(s PeerKey) {
 	bk.addrState.Lock()
 	defer bk.addrState.Unlock()
@@ -132,13 +132,21 @@ func (bk *AddressBook) Touch(s PeerKey) {
 	}
 }
 
+func (bk *AddressBook) Count() int {
+	bk.addrState.RLock()
+	defer bk.addrState.RUnlock()
+
+	return len(bk.peers)
+}
+
 // IsKnown returns true if the peer is already in our address book, false if not.
 func (bk *AddressBook) IsKnown(s PeerKey) bool {
 	bk.addrState.RLock()
 	defer bk.addrState.RUnlock()
 
-	_, known := bk.peers[s]
-	return known
+	_, knownGood := bk.peers[s]
+	_, knownBad := bk.blacklist[s]
+	return knownGood || knownBad
 }
 
 func (bk *AddressBook) IsBlacklisted(s PeerKey) bool {
@@ -147,6 +155,18 @@ func (bk *AddressBook) IsBlacklisted(s PeerKey) bool {
 
 	_, blacklisted := bk.blacklist[s]
 	return blacklisted
+}
+
+// enqueueAddrs sends all of our known valid peers to a channel for processing
+// and adds the count to a WaitGroup counter to aid processing.
+func (bk *AddressBook) enqueueAddrs(addrQueue chan *wire.NetAddress, count *sync.WaitGroup) {
+	bk.addrState.RLock()
+	defer bk.addrState.RUnlock()
+
+	count.Add(len(bk.peers))
+	for _, v := range bk.peers {
+		addrQueue <- v.netaddr
+	}
 }
 
 // WaitForAddresses waits for n addresses to be received and their initial

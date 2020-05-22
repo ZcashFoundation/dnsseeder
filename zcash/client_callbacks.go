@@ -49,9 +49,14 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 
 	s.logger.Printf("Got %d addrs from peer %s", len(msg.AddrList), p.Addr())
 
-	//queue := make(chan *wire.NetAddress, len(msg.AddrList))
-
 	for _, na := range msg.AddrList {
+		// By checking if we know them before adding to the queue, we create
+		// the end condition for the crawler thread: it will time out after
+		// not processing any new addresses.
+		if s.addrBook.IsKnown(peerKeyFromNA(na)) {
+			s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
+			continue
+		}
 		s.addrQueue <- na
 	}
 }

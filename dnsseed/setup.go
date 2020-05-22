@@ -65,18 +65,19 @@ func setup(c *caddy.Controller) error {
 
 	// Send the initial request for more addresses; spawns goroutines to process the responses.
 	// Ready() will flip to true once we've received and confirmed at least 10 peers.
-	seeder.RequestAddresses()
+	go func() {
+		// TODO load from storage if we already know some peers
+		log.Infof("Getting addresses from bootstrap peer %s:%s", address, port)
+		seeder.RequestAddresses()
+		runCrawl(seeder)
+	}()
+	// Start the update timer
 
 	go func() {
 		for {
 			select {
 			case <-time.After(updateInterval):
-				seeder.RequestAddresses()
-				err := seeder.WaitForAddresses(10, 30*time.Second)
-				if err != nil {
-					log.Errorf("Failed to refresh addresses: %v", err)
-				}
-				// XXX: If we wanted to crawl independently, this would be the place.
+				runCrawl(seeder)
 			}
 		}
 	}()
@@ -92,4 +93,26 @@ func setup(c *caddy.Controller) error {
 
 	// All OK, return a nil error.
 	return nil
+}
+
+func runCrawl(seeder *zcash.Seeder) {
+	log.Info("Beginning crawl")
+	start := time.Now()
+
+	// Slow motion crawl: we'll get them all eventually!
+
+	// 1. Make sure our addresses are still live and leave the
+	// connections open (true would disconnect immediately).
+	seeder.RefreshAddresses(false)
+
+	// 2. Request addresses from everyone we're connected to,
+	// synchronously. This will block a while in an attempt
+	// to catch all of the addr responses it can.
+	newPeerCount := seeder.RequestAddresses()
+
+	// 3. Disconnect from everyone & leave them alone for a while
+	seeder.DisconnectAllPeers()
+
+	elapsed := time.Now().Sub(start).Truncate(time.Second).Seconds()
+	log.Infof("Crawl complete, met %d new peers of %d in %.2f seconds", newPeerCount, seeder.GetPeerCount(), elapsed)
 }

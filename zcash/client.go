@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/addrmgr"
@@ -34,7 +35,7 @@ var defaultPeerConfig = &peer.Config{
 	ProtocolVersion:  170009, // Blossom
 }
 
-const (
+var (
 	// The minimum number of addresses we need to know about to begin serving introductions
 	minimumReadyAddresses = 10
 
@@ -46,6 +47,9 @@ const (
 
 	// The amount of time crawler goroutines will wait for incoming addresses after a RequestAddresses()
 	crawlerThreadTimeout = 30 * time.Second
+
+	// The number of goroutines to spawn for a crawl request
+	crawlerGoroutineCount = runtime.NumCPU() * 16
 )
 
 // Seeder contains all of the state and configuration needed to request addresses from Zcash peers and present them to a DNS provider.
@@ -73,6 +77,8 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		return nil, errors.Wrap(err, "could not construct seeder")
 	}
 
+	// sink, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0666)
+	// logger := log.New(sink, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
 	logger := log.New(os.Stdout, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
 
 	newSeeder := Seeder{
@@ -82,7 +88,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, 100),
+		addrQueue:        make(chan *wire.NetAddress, 512),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -111,7 +117,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, 100),
+		addrQueue:        make(chan *wire.NetAddress, 512),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -278,8 +284,12 @@ func (s *Seeder) DisconnectAllPeers() {
 
 // RequestAddresses sends a request for more addresses to every peer we're connected to,
 // then checks to make sure the addresses that come back are usable before adding them to
-// the address book.
-func (s *Seeder) RequestAddresses() {
+// the address book. The call attempts to block until all addresses have been processed,
+// but since we can't know how many that will be it eventually times out. Therefore,
+// while calling RequestAddresses synchronously is possible, it risks a major delay; most
+// users will be better served by giving this its own goroutine and using WaitForAddresses
+// with a timeout to pause only until a sufficient number of addresses are ready.
+func (s *Seeder) RequestAddresses() int {
 	s.livePeers.Range(func(key PeerKey, p *peer.Peer) bool {
 		s.logger.Printf("Requesting addresses from peer %s", p.Addr())
 		p.QueueMessage(wire.NewMsgGetAddr(), nil)
@@ -290,7 +300,12 @@ func (s *Seeder) RequestAddresses() {
 	// GetAddr messages to briefly live trial connections without meaning to. It's
 	// meant to be run on a timer that takes longer to fire than it takes to check addresses.
 
-	for i := 0; i < runtime.NumCPU()*4; i++ {
+	var peerCount int32
+
+	var wg sync.WaitGroup
+	wg.Add(crawlerGoroutineCount)
+
+	for i := 0; i < crawlerGoroutineCount; i++ {
 		go func() {
 			var na *wire.NetAddress
 			for {
@@ -300,7 +315,7 @@ func (s *Seeder) RequestAddresses() {
 					na = next
 				case <-time.After(crawlerThreadTimeout):
 					// Or die if there wasn't one
-					s.logger.Printf("Crawler thread timeout")
+					wg.Done()
 					return
 				}
 
@@ -345,10 +360,63 @@ func (s *Seeder) RequestAddresses() {
 				s.DisconnectPeer(potentialPeer)
 
 				s.logger.Printf("Successfully learned about %s:%d.", na.IP, na.Port)
+				atomic.AddInt32(&peerCount, 1)
 				s.addrBook.Add(potentialPeer)
 			}
 		}()
 	}
+
+	wg.Wait()
+	return int(peerCount)
+}
+
+// RefreshAddresses checks to make sure the addresses we think we know are
+// still usable and removes them from the address book if they aren't.
+// The call blocks until all addresses have been processed. If disconnect is
+// true, we immediately disconnect from the peers after verifying them.
+func (s *Seeder) RefreshAddresses(disconnect bool) {
+	refreshQueue := make(chan *wire.NetAddress, 100)
+	var count sync.WaitGroup
+
+	go s.addrBook.enqueueAddrs(refreshQueue, &count)
+
+	for i := 0; i < crawlerGoroutineCount; i++ {
+		go func() {
+			var na *wire.NetAddress
+			for {
+				select {
+				case next := <-refreshQueue:
+					// Pull the next address off the queue
+					na = next
+				case <-time.After(crawlerThreadTimeout):
+					// Or die if there wasn't one
+					return
+				}
+
+				peer := peerKeyFromNA(na)
+				portString := strconv.Itoa(int(na.Port))
+
+				err := s.Connect(na.IP.String(), portString)
+
+				if err != nil {
+					if err != ErrRepeatConnection {
+						// Blacklist the peer. TODO: We might try to connect again later.
+						s.logger.Printf("Peer %s:%d unusable on refresh. Error: %s", na.IP, na.Port, err)
+						s.addrBook.Blacklist(peer)
+					}
+					count.Done()
+					continue
+				}
+
+				if disconnect {
+					s.DisconnectPeer(peer)
+				}
+				count.Done()
+			}
+		}()
+	}
+
+	count.Wait()
 }
 
 // WaitForAddresses waits for n addresses to be confirmed and available in the address book.
@@ -376,6 +444,11 @@ func (s *Seeder) Addresses(n int) []net.IP {
 // AddressesV6 returns a slice of n IPv6 addresses or as many as we have if it's less than that.
 func (s *Seeder) AddressesV6(n int) []net.IP {
 	return s.addrBook.shuffleAddressList(n, true)
+}
+
+// GetPeerCount returns how many valid peers we know about.
+func (s *Seeder) GetPeerCount() int {
+	return s.addrBook.Count()
 }
 
 // testBlacklist adds a peer to the blacklist directly, for testing.
