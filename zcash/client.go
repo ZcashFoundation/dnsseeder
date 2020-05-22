@@ -45,11 +45,14 @@ var (
 	// The timeout for the underlying dial to a peer
 	connectionDialTimeout = 1 * time.Second
 
-	// The amount of time crawler goroutines will wait for incoming addresses after a RequestAddresses()
+	// The amount of time crawler goroutines will wait after the last new incoming address
 	crawlerThreadTimeout = 30 * time.Second
 
 	// The number of goroutines to spawn for a crawl request
-	crawlerGoroutineCount = runtime.NumCPU() * 16
+	crawlerGoroutineCount = runtime.NumCPU() * 32
+
+	// The amount of space we allocate to keep things moving smoothly.
+	incomingAddressBufferSize = 1024
 )
 
 // Seeder contains all of the state and configuration needed to request addresses from Zcash peers and present them to a DNS provider.
@@ -88,7 +91,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, 512),
+		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -117,7 +120,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, 512),
+		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -193,11 +196,11 @@ func (s *Seeder) Connect(addr, port string) error {
 
 	conn, err := net.DialTimeout("tcp", p.Addr(), connectionDialTimeout)
 	if err != nil {
-		return errors.Wrap(err, "dialing new peer address")
+		return errors.Wrap(err, "dialing peer address")
 	}
 
 	// Begin connection negotiation.
-	s.logger.Printf("Handshake initated with new peer %s", p.Addr())
+	s.logger.Printf("Handshake initated with peer %s", p.Addr())
 	p.AssociateConnection(conn)
 
 	// Wait for
@@ -205,7 +208,7 @@ func (s *Seeder) Connect(addr, port string) error {
 
 	select {
 	case <-handshakeChan.(chan struct{}):
-		s.logger.Printf("Handshake completed with new peer %s", p.Addr())
+		s.logger.Printf("Handshake completed with peer %s", p.Addr())
 		s.handshakeSignals.Delete(pk)
 		return nil
 	case <-time.After(maximumHandshakeWait):
@@ -307,6 +310,8 @@ func (s *Seeder) RequestAddresses() int {
 
 	for i := 0; i < crawlerGoroutineCount; i++ {
 		go func() {
+			defer wg.Done()
+
 			var na *wire.NetAddress
 			for {
 				select {
@@ -315,7 +320,6 @@ func (s *Seeder) RequestAddresses() int {
 					na = next
 				case <-time.After(crawlerThreadTimeout):
 					// Or die if there wasn't one
-					wg.Done()
 					return
 				}
 
@@ -367,6 +371,7 @@ func (s *Seeder) RequestAddresses() int {
 	}
 
 	wg.Wait()
+	s.logger.Printf("RequestAddresses() finished.")
 	return int(peerCount)
 }
 
@@ -375,48 +380,50 @@ func (s *Seeder) RequestAddresses() int {
 // The call blocks until all addresses have been processed. If disconnect is
 // true, we immediately disconnect from the peers after verifying them.
 func (s *Seeder) RefreshAddresses(disconnect bool) {
-	refreshQueue := make(chan *wire.NetAddress, 100)
-	var count sync.WaitGroup
+	s.logger.Printf("Refreshing address book")
 
-	go s.addrBook.enqueueAddrs(refreshQueue, &count)
+	var refreshQueue chan *Address
+	var wg sync.WaitGroup
+
+	// XXX lil awkward to allocate a channel whose size we can't determine without a lock here
+	s.addrBook.enqueueAddrs(&refreshQueue)
 
 	for i := 0; i < crawlerGoroutineCount; i++ {
+		wg.Add(1)
 		go func() {
-			var na *wire.NetAddress
-			for {
-				select {
-				case next := <-refreshQueue:
-					// Pull the next address off the queue
-					na = next
-				case <-time.After(crawlerThreadTimeout):
-					// Or die if there wasn't one
-					return
-				}
+			for len(refreshQueue) > 0 {
+				// Pull the next address off the queue
+				next := <-refreshQueue
+				na := next.netaddr
 
-				peer := peerKeyFromNA(na)
+				ipString := na.IP.String()
 				portString := strconv.Itoa(int(na.Port))
 
-				err := s.Connect(na.IP.String(), portString)
+				err := s.Connect(ipString, portString)
 
 				if err != nil {
 					if err != ErrRepeatConnection {
-						// Blacklist the peer. TODO: We might try to connect again later.
 						s.logger.Printf("Peer %s:%d unusable on refresh. Error: %s", na.IP, na.Port, err)
-						s.addrBook.Blacklist(peer)
+						// Blacklist the peer. We might try to connect again later.
+						// This would deadlock if enqueueAddrs still holds the RLock,
+						// hence the awkward channel allocation above.
+						s.addrBook.Blacklist(next.asPeerKey())
 					}
-					count.Done()
 					continue
 				}
 
 				if disconnect {
-					s.DisconnectPeer(peer)
+					s.DisconnectPeer(next.asPeerKey())
 				}
-				count.Done()
+
+				s.logger.Printf("Validated %s", na.IP)
 			}
+			wg.Done()
 		}()
 	}
 
-	count.Wait()
+	wg.Wait()
+	s.logger.Printf("RefreshAddresses() finished.")
 }
 
 // WaitForAddresses waits for n addresses to be confirmed and available in the address book.

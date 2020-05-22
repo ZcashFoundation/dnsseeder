@@ -57,23 +57,25 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error("dnsseed", err)
 	}
 
+	// TODO load from storage if we already know some peers
+
+	// Send the initial request for more addresses; spawns goroutines to process the responses.
+	// Ready() will flip to true once we've received and confirmed at least 10 peers.
+
+	log.Infof("Getting addresses from bootstrap peer %s:%s", address, port)
+
 	// Connect to the bootstrap peer
 	err = seeder.Connect(address, port)
 	if err != nil {
 		return plugin.Error("dnsseed", err)
 	}
 
-	// Send the initial request for more addresses; spawns goroutines to process the responses.
-	// Ready() will flip to true once we've received and confirmed at least 10 peers.
-	go func() {
-		// TODO load from storage if we already know some peers
-		log.Infof("Getting addresses from bootstrap peer %s:%s", address, port)
-		seeder.RequestAddresses()
-		runCrawl(seeder)
-	}()
-	// Start the update timer
+	seeder.RequestAddresses()
+	seeder.DisconnectAllPeers()
 
+	// Start the update timer
 	go func() {
+		log.Infof("Starting update timer. Will crawl every %.0f minutes.", updateInterval.Minutes())
 		for {
 			select {
 			case <-time.After(updateInterval):

@@ -157,15 +157,14 @@ func (bk *AddressBook) IsBlacklisted(s PeerKey) bool {
 	return blacklisted
 }
 
-// enqueueAddrs sends all of our known valid peers to a channel for processing
-// and adds the count to a WaitGroup counter to aid processing.
-func (bk *AddressBook) enqueueAddrs(addrQueue chan *wire.NetAddress, count *sync.WaitGroup) {
+// enqueueAddrs puts all of our known valid peers to a channel for processing.
+func (bk *AddressBook) enqueueAddrs(addrQueue *chan *Address) {
 	bk.addrState.RLock()
 	defer bk.addrState.RUnlock()
 
-	count.Add(len(bk.peers))
+	*addrQueue = make(chan *Address, len(bk.peers))
 	for _, v := range bk.peers {
-		addrQueue <- v.netaddr
+		*addrQueue <- v
 	}
 }
 
