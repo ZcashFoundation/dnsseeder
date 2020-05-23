@@ -28,11 +28,11 @@ var (
 
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "MagicBean",
-	UserAgentVersion: "2.0.7",
+	UserAgentVersion: "2.1.2",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
-	ProtocolVersion:  170009, // Blossom
+	ProtocolVersion:  170011, // Heartwood
 }
 
 var (
