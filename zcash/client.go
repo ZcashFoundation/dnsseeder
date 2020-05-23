@@ -80,9 +80,9 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		return nil, errors.Wrap(err, "could not construct seeder")
 	}
 
-	// sink, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0666)
-	// logger := log.New(sink, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
-	logger := log.New(os.Stdout, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
+	sink, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0666)
+	logger := log.New(sink, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
+	// logger := log.New(os.Stdout, "zcash_seeder: ", log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
 
 	newSeeder := Seeder{
 		config:           config,

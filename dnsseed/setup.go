@@ -98,7 +98,7 @@ func setup(c *caddy.Controller) error {
 }
 
 func runCrawl(seeder *zcash.Seeder) {
-	log.Info("Beginning crawl")
+	log.Infof("[%s] Beginning crawl", time.Now().Format("2006/01/02 15:04:05"))
 	start := time.Now()
 
 	// Slow motion crawl: we'll get them all eventually!
@@ -116,5 +116,11 @@ func runCrawl(seeder *zcash.Seeder) {
 	seeder.DisconnectAllPeers()
 
 	elapsed := time.Now().Sub(start).Truncate(time.Second).Seconds()
-	log.Infof("Crawl complete, met %d new peers of %d in %.2f seconds", newPeerCount, seeder.GetPeerCount(), elapsed)
+	log.Infof(
+		"[%s] Crawl complete, met %d new peers of %d in %.2f seconds",
+		time.Now().Format("2006/01/02 15:04:05"),
+		newPeerCount,
+		seeder.GetPeerCount(),
+		elapsed,
+	)
 }
