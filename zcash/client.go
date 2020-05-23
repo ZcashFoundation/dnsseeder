@@ -40,10 +40,10 @@ var (
 	minimumReadyAddresses = 10
 
 	// The maximum amount of time we will wait for a peer to complete the initial handshake
-	maximumHandshakeWait = 1 * time.Second
+	maximumHandshakeWait = 2 * time.Second
 
 	// The timeout for the underlying dial to a peer
-	connectionDialTimeout = 1 * time.Second
+	connectionDialTimeout = 2 * time.Second
 
 	// The amount of time crawler goroutines will wait after the last new incoming address
 	crawlerThreadTimeout = 30 * time.Second
