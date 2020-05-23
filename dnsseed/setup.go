@@ -43,7 +43,7 @@ func setup(c *caddy.Controller) error {
 	}
 
 	// Automatically configure the responsive zone by network
-	zone := fmt.Sprintf("%s.seeder.%s.", networkArg, rootArg)
+	zone := fmt.Sprintf("seeder.%s.%s.", networkArg, rootArg)
 
 	address, port, err := net.SplitHostPort(hostArg)
 	if err != nil {
