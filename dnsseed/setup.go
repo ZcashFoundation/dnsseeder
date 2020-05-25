@@ -68,8 +68,11 @@ func setup(c *caddy.Controller) error {
 
 	// Send the initial request for more addresses; spawns goroutines to process the responses.
 	// Ready() will flip to true once we've received and confirmed at least 10 peers.
-	seeder.RequestAddresses()
-	seeder.DisconnectAllPeers()
+	go runCrawl(seeder)
+	err = seeder.WaitForAddresses(1, 30*time.Second)
+	if err != nil {
+		return plugin.Error(pluginName, c.Err("went 30 second without a single address"))
+	}
 
 	// Start the update timer
 	go func() {
