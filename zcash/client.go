@@ -426,6 +426,48 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 	s.logger.Printf("RefreshAddresses() finished.")
 }
 
+// RetryBlacklist checks if the addresses in our blacklist are usable again.
+// If the trial connection succeeds, they're removed from the blacklist.
+func (s *Seeder) RetryBlacklist() {
+	s.logger.Printf("Giving the blacklist another chance")
+
+	var blacklistQueue chan *Address
+	var wg sync.WaitGroup
+
+	// XXX lil awkward to allocate a channel whose size we can't determine without a lock here
+	s.addrBook.enqueueAddrs(&blacklistQueue)
+
+	for i := 0; i < crawlerGoroutineCount; i++ {
+		wg.Add(1)
+		go func() {
+			for len(blacklistQueue) > 0 {
+				// Pull the next address off the queue
+				next := <-blacklistQueue
+				na := next.netaddr
+
+				ipString := na.IP.String()
+				portString := strconv.Itoa(int(na.Port))
+
+				err := s.Connect(ipString, portString)
+
+				if err != nil {
+					// Connection failed. Peer remains blacklisted.
+					continue
+				}
+
+				s.DisconnectPeer(next.asPeerKey())
+
+				// This would deadlock if enqueueAddrs still held the RLock.
+				s.addrBook.Redeem(next.asPeerKey())
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+	s.logger.Printf("RetryBlacklist() finished.")
+}
+
 // WaitForAddresses waits for n addresses to be confirmed and available in the address book.
 func (s *Seeder) WaitForAddresses(n int, timeout time.Duration) error {
 	done := make(chan struct{})
@@ -461,4 +503,9 @@ func (s *Seeder) GetPeerCount() int {
 // testBlacklist adds a peer to the blacklist directly, for testing.
 func (s *Seeder) testBlacklist(pk PeerKey) {
 	s.addrBook.Blacklist(pk)
+}
+
+// testRedeen adds a peer to the blacklist directly, for testing.
+func (s *Seeder) testRedeem(pk PeerKey) {
+	s.addrBook.Redeem(pk)
 }
