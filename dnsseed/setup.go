@@ -1,6 +1,7 @@
 package dnsseed
 
 import (
+	crypto_rand "crypto/rand"
 	"net"
 	"net/url"
 	"time"
@@ -73,10 +74,18 @@ func setup(c *caddy.Controller) error {
 	// Start the update timer
 	go func() {
 		log.Infof("Starting update timer. Will crawl every %.0f minutes.", updateInterval.Minutes())
+		randByte := []byte{0}
 		for {
 			select {
 			case <-time.After(updateInterval):
 				runCrawl(seeder)
+				crypto_rand.Read(randByte[:])
+				if randByte[0] >= byte(192) {
+					// About 25% of the time, retry the blacklist.
+					// This stops us from losing peers forever due to
+					// temporary downtime.
+					seeder.RetryBlacklist()
+				}
 			}
 		}
 	}()

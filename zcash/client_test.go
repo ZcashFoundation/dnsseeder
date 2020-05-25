@@ -231,4 +231,10 @@ func TestBlacklist(t *testing.T) {
 	if err != ErrBlacklistedPeer {
 		t.Errorf("Blacklist did not prevent connection")
 	}
+
+	regSeeder.testRedeem(PeerKey("127.0.0.1:12345"))
+	err = regSeeder.Connect("127.0.0.1", "12345")
+	if err != nil {
+		t.Errorf("Redeem didn't allow reconnecting")
+	}
 }

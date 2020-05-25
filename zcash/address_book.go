@@ -104,6 +104,7 @@ func (bk *AddressBook) Remove(s PeerKey) {
 	}
 }
 
+// Blacklist adds an address to the blacklist so we won't try to connect to it again.
 func (bk *AddressBook) Blacklist(s PeerKey) {
 	bk.addrState.Lock()
 	defer bk.addrState.Unlock()
@@ -119,6 +120,16 @@ func (bk *AddressBook) Blacklist(s PeerKey) {
 			return
 		}
 		bk.blacklist[s] = addr
+	}
+}
+
+// Redeem removes an address from the blacklist.
+func (bk *AddressBook) Redeem(s PeerKey) {
+	bk.addrState.Lock()
+	defer bk.addrState.Unlock()
+
+	if _, ok := bk.blacklist[s]; ok {
+		delete(bk.blacklist, s)
 	}
 }
 
