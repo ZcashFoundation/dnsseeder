@@ -2,8 +2,10 @@ package dnsseed
 
 import (
 	crypto_rand "crypto/rand"
+	"math"
 	"net"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/caddyserver/caddy"
@@ -18,11 +20,20 @@ import (
 const pluginName = "dnsseed"
 
 var (
-	log            = clog.NewWithPlugin(pluginName)
-	updateInterval = 15 * time.Minute
+	log                          = clog.NewWithPlugin(pluginName)
+	defaultUpdateInterval        = 15 * time.Minute
+	defaultTTL            uint32 = 3600
 )
 
 func init() { plugin.Register(pluginName, setup) }
+
+type options struct {
+	networkName    string
+	networkMagic   network.Network
+	updateInterval time.Duration
+	recordTTL      uint32
+	bootstrapPeers []string
+}
 
 // setup is the function that gets called when the config parser see the token(pluginName. Setup is responsible
 // for parsing any extra options the example plugin may have. The first token this function sees is(pluginName.
@@ -33,27 +44,26 @@ func setup(c *caddy.Controller) error {
 		return c.Errf("couldn't parse zone from block identifer: %s", c.Key)
 	}
 
-	magic, interval, bootstrap, err := parseConfig(c)
+	opts, err := parseConfig(c)
 	if err != nil {
 		return err
 	}
 
-	if interval != 0 {
-		updateInterval = interval
+	if len(opts.bootstrapPeers) == 0 {
+		// TODO alternatively, load from storage if we already know some peers
+		return plugin.Error(pluginName, c.Err("config supplied no bootstrap peers"))
 	}
 
 	// TODO If we wanted to register Prometheus metrics, this would be the place.
 
-	seeder, err := zcash.NewSeeder(magic)
+	seeder, err := zcash.NewSeeder(opts.networkMagic)
 	if err != nil {
 		return plugin.Error(pluginName, err)
 	}
 
-	// TODO load from storage if we already know some peers
+	log.Infof("Getting addresses from bootstrap peers %v", opts.bootstrapPeers)
 
-	log.Infof("Getting addresses from bootstrap peers %v", bootstrap)
-
-	for _, s := range bootstrap {
+	for _, s := range opts.bootstrapPeers {
 		address, port, err := net.SplitHostPort(s)
 		if err != nil {
 			return plugin.Error(pluginName, c.Errf("config error: expected 'host:port', got %s", s))
@@ -76,11 +86,11 @@ func setup(c *caddy.Controller) error {
 
 	// Start the update timer
 	go func() {
-		log.Infof("Starting update timer. Will crawl every %.0f minutes.", updateInterval.Minutes())
+		log.Infof("Starting update timer. Will crawl every %.1f minutes.", opts.updateInterval.Minutes())
 		randByte := []byte{0}
 		for {
 			select {
-			case <-time.After(updateInterval):
+			case <-time.After(opts.updateInterval):
 				runCrawl(seeder)
 				crypto_rand.Read(randByte[:])
 				if randByte[0] >= byte(192) {
@@ -99,6 +109,7 @@ func setup(c *caddy.Controller) error {
 			Next:   next,
 			Zones:  []string{zone.Hostname()},
 			seeder: seeder,
+			opts:   opts,
 		}
 	})
 
@@ -106,45 +117,66 @@ func setup(c *caddy.Controller) error {
 	return nil
 }
 
-func parseConfig(c *caddy.Controller) (magic network.Network, interval time.Duration, bootstrap []string, err error) {
+func parseConfig(c *caddy.Controller) (*options, error) {
+	opts := &options{
+		updateInterval: defaultUpdateInterval,
+		recordTTL:      defaultTTL,
+	}
 	c.Next() // skip the string "dnsseed"
 
-	for c.NextBlock() {
+	if !c.NextBlock() {
+		return nil, plugin.Error(pluginName, c.SyntaxErr("expected config block"))
+	}
+
+	for loaded := true; loaded; loaded = c.NextBlock() {
 		switch c.Val() {
 		case "network":
 			if !c.NextArg() {
-				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("no network specified"))
+				return nil, plugin.Error(pluginName, c.SyntaxErr("no network specified"))
 			}
 			switch c.Val() {
 			case "mainnet":
-				magic = network.Mainnet
+				opts.networkName = "mainnet"
+				opts.networkMagic = network.Mainnet
 			case "testnet":
-				magic = network.Testnet
+				opts.networkName = "testnet"
+				opts.networkMagic = network.Testnet
 			default:
-				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("networks are {mainnet, testnet}"))
+				return nil, plugin.Error(pluginName, c.SyntaxErr("networks are {mainnet, testnet}"))
 			}
 		case "crawl_interval":
 			if !c.NextArg() {
-				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("no crawl interval specified"))
+				return nil, plugin.Error(pluginName, c.SyntaxErr("no crawl interval specified"))
 			}
-			interval, err = time.ParseDuration(c.Val())
+			interval, err := time.ParseDuration(c.Val())
 			if err != nil || interval == 0 {
-				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("bad crawl_interval duration"))
+				return nil, plugin.Error(pluginName, c.SyntaxErr("bad crawl_interval duration"))
 			}
+			opts.updateInterval = interval
 		case "bootstrap_peers":
-			bootstrap = c.RemainingArgs()
+			bootstrap := c.RemainingArgs()
 			if len(bootstrap) == 0 {
-				plugin.Error(pluginName, c.SyntaxErr("no bootstrap peers specified"))
+				return nil, plugin.Error(pluginName, c.SyntaxErr("no bootstrap peers specified"))
 			}
+			opts.bootstrapPeers = bootstrap
+		case "record_ttl":
+			if !c.NextArg() {
+				return nil, plugin.Error(pluginName, c.SyntaxErr("no ttl specified"))
+			}
+			ttl, err := strconv.Atoi(c.Val())
+			if err != nil || ttl <= 0 || ttl > math.MaxUint32 {
+				return nil, plugin.Error(pluginName, c.SyntaxErr("bad ttl"))
+			}
+			opts.recordTTL = uint32(ttl)
 		default:
-			return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("unsupported option"))
+			return nil, plugin.Error(pluginName, c.SyntaxErr("unsupported option"))
 		}
 	}
-	return
+	return opts, nil
 }
 
 func runCrawl(seeder *zcash.Seeder) {
-	log.Infof("[%s] Beginning crawl", time.Now().Format("2006/01/02 15:04:05"))
+	// log.Infof("[%s] Beginning crawl", time.Now().Format("2006/01/02 15:04:05"))
 	start := time.Now()
 
 	// Slow motion crawl: we'll get them all eventually!
@@ -163,7 +195,7 @@ func runCrawl(seeder *zcash.Seeder) {
 
 	elapsed := time.Now().Sub(start).Truncate(time.Second).Seconds()
 	log.Infof(
-		"[%s] Crawl complete, met %d new peers of %d in %.2f seconds",
+		"[%s] Crawl complete, met %d new peers of %d in %.0f seconds",
 		time.Now().Format("2006/01/02 15:04:05"),
 		newPeerCount,
 		seeder.GetPeerCount(),

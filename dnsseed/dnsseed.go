@@ -15,6 +15,7 @@ type ZcashSeeder struct {
 	Next   plugin.Handler
 	Zones  []string
 	seeder *zcash.Seeder
+	opts   *options
 }
 
 // Name satisfies the Handler interface.
@@ -55,11 +56,11 @@ func (zs ZcashSeeder) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns
 
 		if peerIPs[i].To4() == nil {
 			rr = new(dns.AAAA)
-			rr.(*dns.AAAA).Hdr = dns.RR_Header{Name: state.QName(), Rrtype: dns.TypeAAAA, Ttl: 3600, Class: state.QClass()}
+			rr.(*dns.AAAA).Hdr = dns.RR_Header{Name: state.QName(), Rrtype: dns.TypeAAAA, Ttl: zs.opts.recordTTL, Class: state.QClass()}
 			rr.(*dns.AAAA).AAAA = peerIPs[i]
 		} else {
 			rr = new(dns.A)
-			rr.(*dns.A).Hdr = dns.RR_Header{Name: state.QName(), Rrtype: dns.TypeA, Ttl: 3600, Class: state.QClass()}
+			rr.(*dns.A).Hdr = dns.RR_Header{Name: state.QName(), Rrtype: dns.TypeA, Ttl: zs.opts.recordTTL, Class: state.QClass()}
 			rr.(*dns.A).A = peerIPs[i]
 		}
 
