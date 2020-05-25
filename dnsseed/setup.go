@@ -1,8 +1,8 @@
 package dnsseed
 
 import (
-	"fmt"
 	"net"
+	"net/url"
 	"time"
 
 	"github.com/caddyserver/caddy"
@@ -14,62 +14,59 @@ import (
 	"github.com/zcashfoundation/dnsseeder/zcash/network"
 )
 
+const pluginName = "dnsseed"
+
 var (
-	log            = clog.NewWithPlugin("dnsseed")
+	log            = clog.NewWithPlugin(pluginName)
 	updateInterval = 15 * time.Minute
 )
 
-func init() { plugin.Register("dnsseed", setup) }
+func init() { plugin.Register(pluginName, setup) }
 
-// setup is the function that gets called when the config parser see the token "dnsseed". Setup is responsible
-// for parsing any extra options the example plugin may have. The first token this function sees is "dnsseed".
+// setup is the function that gets called when the config parser see the token(pluginName. Setup is responsible
+// for parsing any extra options the example plugin may have. The first token this function sees is(pluginName.
 func setup(c *caddy.Controller) error {
-	var rootArg, networkArg, hostArg string
-
-	c.Next() // Ignore "dnsseed" and give us the next token.
-
-	if !c.Args(&rootArg, &networkArg, &hostArg) {
-		return plugin.Error("dnsseed", c.ArgErr())
-	}
-
-	var magic network.Network
-	switch networkArg {
-	case "mainnet":
-		magic = network.Mainnet
-	case "testnet":
-		magic = network.Testnet
-	default:
-		return plugin.Error("dnsseed", c.Errf("Config error: expected {mainnet, testnet}, got %s", networkArg))
-	}
-
-	// Automatically configure the responsive zone by network
-	zone := fmt.Sprintf("seeder.%s.%s.", networkArg, rootArg)
-
-	address, port, err := net.SplitHostPort(hostArg)
+	// Automatically configure responsive zone
+	zone, err := url.Parse(c.Key)
 	if err != nil {
-		return plugin.Error("dnsseed", c.Errf("Config error: expected 'host:port', got %s", hostArg))
+		return c.Errf("couldn't parse zone from block identifer: %s", c.Key)
 	}
 
-	// XXX: If we wanted to register Prometheus metrics, this would be the place.
+	magic, interval, bootstrap, err := parseConfig(c)
+	if err != nil {
+		return err
+	}
+
+	if interval != 0 {
+		updateInterval = interval
+	}
+
+	// TODO If we wanted to register Prometheus metrics, this would be the place.
 
 	seeder, err := zcash.NewSeeder(magic)
 	if err != nil {
-		return plugin.Error("dnsseed", err)
+		return plugin.Error(pluginName, err)
 	}
 
 	// TODO load from storage if we already know some peers
 
-	// Send the initial request for more addresses; spawns goroutines to process the responses.
-	// Ready() will flip to true once we've received and confirmed at least 10 peers.
+	log.Infof("Getting addresses from bootstrap peers %v", bootstrap)
 
-	log.Infof("Getting addresses from bootstrap peer %s:%s", address, port)
+	for _, s := range bootstrap {
+		address, port, err := net.SplitHostPort(s)
+		if err != nil {
+			return plugin.Error(pluginName, c.Errf("config error: expected 'host:port', got %s", s))
+		}
 
-	// Connect to the bootstrap peer
-	err = seeder.Connect(address, port)
-	if err != nil {
-		return plugin.Error("dnsseed", err)
+		// Connect to the bootstrap peer
+		err = seeder.Connect(address, port)
+		if err != nil {
+			return plugin.Error(pluginName, c.Errf("error connecting to %s:%s: %v", address, port, err))
+		}
 	}
 
+	// Send the initial request for more addresses; spawns goroutines to process the responses.
+	// Ready() will flip to true once we've received and confirmed at least 10 peers.
 	seeder.RequestAddresses()
 	seeder.DisconnectAllPeers()
 
@@ -88,13 +85,50 @@ func setup(c *caddy.Controller) error {
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		return ZcashSeeder{
 			Next:   next,
-			Zones:  []string{zone},
+			Zones:  []string{zone.Hostname()},
 			seeder: seeder,
 		}
 	})
 
 	// All OK, return a nil error.
 	return nil
+}
+
+func parseConfig(c *caddy.Controller) (magic network.Network, interval time.Duration, bootstrap []string, err error) {
+	c.Next() // skip the string "dnsseed"
+
+	for c.NextBlock() {
+		switch c.Val() {
+		case "network":
+			if !c.NextArg() {
+				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("no network specified"))
+			}
+			switch c.Val() {
+			case "mainnet":
+				magic = network.Mainnet
+			case "testnet":
+				magic = network.Testnet
+			default:
+				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("networks are {mainnet, testnet}"))
+			}
+		case "crawl_interval":
+			if !c.NextArg() {
+				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("no crawl interval specified"))
+			}
+			interval, err = time.ParseDuration(c.Val())
+			if err != nil || interval == 0 {
+				return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("bad crawl_interval duration"))
+			}
+		case "bootstrap_peers":
+			bootstrap = c.RemainingArgs()
+			if len(bootstrap) == 0 {
+				plugin.Error(pluginName, c.SyntaxErr("no bootstrap peers specified"))
+			}
+		default:
+			return 0, 0, nil, plugin.Error(pluginName, c.SyntaxErr("unsupported option"))
+		}
+	}
+	return
 }
 
 func runCrawl(seeder *zcash.Seeder) {
