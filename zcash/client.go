@@ -156,21 +156,25 @@ func (s *Seeder) GetNetworkDefaultPort() string {
 // the peer. Otherwise it returns nil and adds the peer to the list of live
 // connections and known-good addresses.
 func (s *Seeder) ConnectOnDefaultPort(addr string) error {
-	return s.Connect(addr, s.config.ChainParams.DefaultPort)
+	_, err := s.Connect(addr, s.config.ChainParams.DefaultPort)
+	return err
 }
 
-func (s *Seeder) Connect(addr, port string) error {
+// Connect attempts to connect to a peer at the given address and port. It
+// returns a handle to the peer connection if the connection is successful
+// or nil and an error if it fails.
+func (s *Seeder) Connect(addr, port string) (*peer.Peer, error) {
 	connectionString := net.JoinHostPort(addr, port)
 	p, err := peer.NewOutboundPeer(s.config, connectionString)
 	if err != nil {
-		return errors.Wrap(err, "constructing outbound peer")
+		return nil, errors.Wrap(err, "constructing outbound peer")
 	}
 
 	// PeerKeys are used in our internal maps to keep signals and responses from specific peers straight.
 	pk := peerKeyFromPeer(p)
 
 	if s.addrBook.IsBlacklisted(pk) {
-		return ErrBlacklistedPeer
+		return nil, ErrBlacklistedPeer
 	}
 
 	_, alreadyPending := s.pendingPeers.Load(pk)
@@ -179,24 +183,24 @@ func (s *Seeder) Connect(addr, port string) error {
 
 	if alreadyPending {
 		s.logger.Printf("Peer is already pending: %s", p.Addr())
-		return ErrRepeatConnection
+		return nil, ErrRepeatConnection
 	}
 	s.pendingPeers.Store(pk, p)
 
 	if alreadyHandshaking {
 		s.logger.Printf("Peer is already handshaking: %s", p.Addr())
-		return ErrRepeatConnection
+		return nil, ErrRepeatConnection
 	}
 	s.handshakeSignals.Store(pk, make(chan struct{}, 1))
 
 	if alreadyLive {
 		s.logger.Printf("Peer is already live: %s", p.Addr())
-		return ErrRepeatConnection
+		return nil, ErrRepeatConnection
 	}
 
 	conn, err := net.DialTimeout("tcp", p.Addr(), connectionDialTimeout)
 	if err != nil {
-		return errors.Wrap(err, "dialing peer address")
+		return nil, errors.Wrap(err, "dialing peer address")
 	}
 
 	// Begin connection negotiation.
@@ -210,9 +214,9 @@ func (s *Seeder) Connect(addr, port string) error {
 	case <-handshakeChan.(chan struct{}):
 		s.logger.Printf("Handshake completed with peer %s", p.Addr())
 		s.handshakeSignals.Delete(pk)
-		return nil
+		return p, nil
 	case <-time.After(maximumHandshakeWait):
-		return errors.New("peer handshake started but timed out")
+		return nil, errors.New("peer handshake started but timed out")
 	}
 
 	panic("This should be unreachable")
@@ -346,7 +350,7 @@ func (s *Seeder) RequestAddresses() int {
 				}
 
 				portString := strconv.Itoa(int(na.Port))
-				err := s.Connect(na.IP.String(), portString)
+				newPeer, err := s.Connect(na.IP.String(), portString)
 
 				if err != nil {
 					if err == ErrRepeatConnection {
@@ -361,7 +365,10 @@ func (s *Seeder) RequestAddresses() int {
 					continue
 				}
 
-				s.DisconnectPeer(potentialPeer)
+				// Ask the newly discovered peer if they know anyone we haven't met yet.
+				newPeer.QueueMessage(wire.NewMsgGetAddr(), nil)
+
+				//s.DisconnectPeer(potentialPeer)
 
 				s.logger.Printf("Successfully learned about %s:%d.", na.IP, na.Port)
 				atomic.AddInt32(&peerCount, 1)
@@ -399,7 +406,8 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 				ipString := na.IP.String()
 				portString := strconv.Itoa(int(na.Port))
 
-				err := s.Connect(ipString, portString)
+				// Don't care about the peer individually, just that we can connect.
+				_, err := s.Connect(ipString, portString)
 
 				if err != nil {
 					if err != ErrRepeatConnection {
@@ -448,7 +456,7 @@ func (s *Seeder) RetryBlacklist() {
 				ipString := na.IP.String()
 				portString := strconv.Itoa(int(na.Port))
 
-				err := s.Connect(ipString, portString)
+				_, err := s.Connect(ipString, portString)
 
 				if err != nil {
 					// Connection failed. Peer remains blacklisted.

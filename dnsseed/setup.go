@@ -70,7 +70,7 @@ func setup(c *caddy.Controller) error {
 		}
 
 		// Connect to the bootstrap peer
-		err = seeder.Connect(address, port)
+		_, err = seeder.Connect(address, port)
 		if err != nil {
 			return plugin.Error(pluginName, c.Errf("error connecting to %s:%s: %v", address, port, err))
 		}

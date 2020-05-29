@@ -226,14 +226,17 @@ func TestBlacklist(t *testing.T) {
 		t.Errorf("Error getting one mocked address: %v", err)
 	}
 
-	regSeeder.testBlacklist(PeerKey("127.0.0.1:12345"))
-	err = regSeeder.Connect("127.0.0.1", "12345")
+	workingTestPeer := PeerKey("127.0.0.1:12345")
+
+	regSeeder.testBlacklist(workingTestPeer)
+	_, err = regSeeder.Connect("127.0.0.1", "12345")
 	if err != ErrBlacklistedPeer {
 		t.Errorf("Blacklist did not prevent connection")
 	}
+	regSeeder.DisconnectPeer(workingTestPeer)
 
-	regSeeder.testRedeem(PeerKey("127.0.0.1:12345"))
-	err = regSeeder.Connect("127.0.0.1", "12345")
+	regSeeder.testRedeem(workingTestPeer)
+	_, err = regSeeder.Connect("127.0.0.1", "12345")
 	if err != nil {
 		t.Errorf("Redeem didn't allow reconnecting")
 	}
