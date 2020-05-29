@@ -78,20 +78,14 @@ func setup(c *caddy.Controller) error {
 
 	// Send the initial request for more addresses; spawns goroutines to process the responses.
 	// Ready() will flip to true once we've received and confirmed at least 10 peers.
-	go runCrawl(seeder)
-	err = seeder.WaitForAddresses(1, 30*time.Second)
-	if err != nil {
-		return plugin.Error(pluginName, c.Err("went 30 second without a single address"))
-	}
-
-	// Start the update timer
 	go func() {
-		log.Infof("Starting update timer. Will crawl every %.1f minutes.", opts.updateInterval.Minutes())
+		runCrawl(opts.networkName, seeder)
+		log.Infof("Starting update timer on %s. Will crawl every %.1f minutes.", opts.networkName, opts.updateInterval.Minutes())
 		randByte := []byte{0}
 		for {
 			select {
 			case <-time.After(opts.updateInterval):
-				runCrawl(seeder)
+				runCrawl(opts.networkName, seeder)
 				crypto_rand.Read(randByte[:])
 				if randByte[0] >= byte(192) {
 					// About 25% of the time, retry the blacklist.
@@ -102,6 +96,11 @@ func setup(c *caddy.Controller) error {
 			}
 		}
 	}()
+
+	err = seeder.WaitForAddresses(1, 30*time.Second)
+	if err != nil {
+		return plugin.Error(pluginName, c.Err("went 30 second without learning a single address"))
+	}
 
 	// Add the Plugin to CoreDNS, so Servers can use it in their plugin chain.
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
@@ -175,8 +174,8 @@ func parseConfig(c *caddy.Controller) (*options, error) {
 	return opts, nil
 }
 
-func runCrawl(seeder *zcash.Seeder) {
-	// log.Infof("[%s] Beginning crawl", time.Now().Format("2006/01/02 15:04:05"))
+func runCrawl(name string, seeder *zcash.Seeder) {
+	log.Infof("[%s] Beginning %s crawl", time.Now().Format("2006/01/02 15:04:05"), name)
 	start := time.Now()
 
 	// Slow motion crawl: we'll get them all eventually!
@@ -195,8 +194,9 @@ func runCrawl(seeder *zcash.Seeder) {
 
 	elapsed := time.Now().Sub(start).Truncate(time.Second).Seconds()
 	log.Infof(
-		"[%s] Crawl complete, met %d new peers of %d in %.0f seconds",
+		"[%s] %s crawl complete, met %d new peers of %d in %.0f seconds",
 		time.Now().Format("2006/01/02 15:04:05"),
+		name,
 		newPeerCount,
 		seeder.GetPeerCount(),
 		elapsed,
