@@ -123,8 +123,22 @@ func (bk *AddressBook) Blacklist(s PeerKey) {
 	}
 }
 
-// Redeem removes an address from the blacklist.
+// Redeem removes an address from the blacklist and adds it to the peer list.
 func (bk *AddressBook) Redeem(s PeerKey) {
+	bk.addrState.Lock()
+	if addr, ok := bk.blacklist[s]; ok {
+		delete(bk.blacklist, s)
+		addr.lastUpdate = time.Now()
+		bk.peers[s] = addr
+	}
+	bk.addrState.Unlock()
+
+	// Wake anyone who was waiting on us to receive an address.
+	bk.addrRecvCond.Broadcast()
+}
+
+// DropFromBlacklist removes an address from the blacklist.
+func (bk *AddressBook) DropFromBlacklist(s PeerKey) {
 	bk.addrState.Lock()
 	defer bk.addrState.Unlock()
 
@@ -175,6 +189,17 @@ func (bk *AddressBook) enqueueAddrs(addrQueue *chan *Address) {
 
 	*addrQueue = make(chan *Address, len(bk.peers))
 	for _, v := range bk.peers {
+		*addrQueue <- v
+	}
+}
+
+// enqueueBlacklist puts all of our blacklisted peers into a channel.
+func (bk *AddressBook) enqueueBlacklist(addrQueue *chan *Address) {
+	bk.addrState.RLock()
+	defer bk.addrState.RUnlock()
+
+	*addrQueue = make(chan *Address, len(bk.blacklist))
+	for _, v := range bk.blacklist {
 		*addrQueue <- v
 	}
 }

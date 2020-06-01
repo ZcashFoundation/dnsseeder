@@ -53,6 +53,9 @@ var (
 
 	// The amount of space we allocate to keep things moving smoothly.
 	incomingAddressBufferSize = 1024
+
+	// The amount of time a peer can spend on the blacklist before we forget about it entirely.
+	blacklistDropTime = 3 * 24 * time.Hour
 )
 
 // Seeder contains all of the state and configuration needed to request addresses from Zcash peers and present them to a DNS provider.
@@ -443,7 +446,7 @@ func (s *Seeder) RetryBlacklist() {
 	var wg sync.WaitGroup
 
 	// XXX lil awkward to allocate a channel whose size we can't determine without a lock here
-	s.addrBook.enqueueAddrs(&blacklistQueue)
+	s.addrBook.enqueueBlacklist(&blacklistQueue)
 
 	for i := 0; i < crawlerGoroutineCount; i++ {
 		wg.Add(1)
@@ -460,12 +463,18 @@ func (s *Seeder) RetryBlacklist() {
 
 				if err != nil {
 					// Connection failed. Peer remains blacklisted.
+					if time.Since(next.lastUpdate) > blacklistDropTime {
+						// If we've been retrying for a while, forget about this peer entirely.
+						// This would deadlock if enqueueBlacklist still held the RLock.
+						s.addrBook.DropFromBlacklist(next.asPeerKey())
+					}
 					continue
 				}
 
 				s.DisconnectPeer(next.asPeerKey())
 
-				// This would deadlock if enqueueAddrs still held the RLock.
+				// Remove the peer from the blacklist and add it back to the address book.
+				// This would deadlock if enqueueBlacklist still held the RLock.
 				s.addrBook.Redeem(next.asPeerKey())
 			}
 			wg.Done()
@@ -515,5 +524,5 @@ func (s *Seeder) testBlacklist(pk PeerKey) {
 
 // testRedeen adds a peer to the blacklist directly, for testing.
 func (s *Seeder) testRedeem(pk PeerKey) {
-	s.addrBook.Redeem(pk)
+	s.addrBook.DropFromBlacklist(pk)
 }
