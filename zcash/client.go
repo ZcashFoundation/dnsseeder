@@ -27,8 +27,8 @@ var (
 )
 
 var defaultPeerConfig = &peer.Config{
-	UserAgentName:    "MagicBean",
-	UserAgentVersion: "2.1.2",
+	UserAgentName:    "zfnd-seeder",
+	UserAgentVersion: "0.1.0",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
