@@ -13,7 +13,8 @@ func (s *Seeder) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
 
 	if !ok {
 		s.logger.Printf("Got verack from unexpected peer %s", p.Addr())
-		// TODO: probably want to disconnect from the peer sending us out-of-order veracks
+		// Disconnect from the peer sending us out-of-order veracks
+		s.DisconnectPeer(pk)
 		return
 	}
 
