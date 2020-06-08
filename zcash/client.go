@@ -40,10 +40,10 @@ var (
 	minimumReadyAddresses = 10
 
 	// The maximum amount of time we will wait for a peer to complete the initial handshake
-	maximumHandshakeWait = 2 * time.Second
+	maximumHandshakeWait = 5 * time.Second
 
 	// The timeout for the underlying dial to a peer
-	connectionDialTimeout = 2 * time.Second
+	connectionDialTimeout = 5 * time.Second
 
 	// The amount of time crawler goroutines will wait after the last new incoming address
 	crawlerThreadTimeout = 30 * time.Second
@@ -52,7 +52,7 @@ var (
 	crawlerGoroutineCount = runtime.NumCPU() * 32
 
 	// The amount of space we allocate to keep things moving smoothly.
-	incomingAddressBufferSize = 1024
+	incomingAddressBufferSize = 4096
 
 	// The amount of time a peer can spend on the blacklist before we forget about it entirely.
 	blacklistDropTime = 3 * 24 * time.Hour
