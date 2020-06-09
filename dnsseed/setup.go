@@ -175,21 +175,18 @@ func parseConfig(c *caddy.Controller) (*options, error) {
 }
 
 func runCrawl(name string, seeder *zcash.Seeder) {
-	log.Infof("[%s] Beginning %s crawl", time.Now().Format("2006/01/02 15:04:05"), name)
 	start := time.Now()
 
-	// Slow motion crawl: we'll get them all eventually!
-
-	// 1. Make sure our addresses are still live and leave the
-	// connections open (true would disconnect immediately).
+	// Make sure our addresses are still live and leave the connections open
+	// (true would disconnect immediately).
 	seeder.RefreshAddresses(false)
 
-	// 2. Request addresses from everyone we're connected to,
-	// synchronously. This will block a while in an attempt
-	// to catch all of the addr responses it can.
+	// Request addresses from everyone we're connected to, synchronously. This
+	// will block a while in an attempt to catch all of the addr responses it
+	// can.
 	newPeerCount := seeder.RequestAddresses()
 
-	// 3. Disconnect from everyone & leave them alone for a while
+	// Disconnect and leave everyone alone for a while.
 	seeder.DisconnectAllPeers()
 
 	elapsed := time.Now().Sub(start).Truncate(time.Second).Seconds()
