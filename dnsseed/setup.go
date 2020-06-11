@@ -63,6 +63,7 @@ func setup(c *caddy.Controller) error {
 
 	log.Infof("Getting addresses from bootstrap peers %v", opts.bootstrapPeers)
 
+	connectedToBootstrap := false
 	for _, s := range opts.bootstrapPeers {
 		address, port, err := net.SplitHostPort(s)
 		if err != nil {
@@ -72,8 +73,14 @@ func setup(c *caddy.Controller) error {
 		// Connect to the bootstrap peer
 		_, err = seeder.Connect(address, port)
 		if err != nil {
-			return plugin.Error(pluginName, c.Errf("error connecting to %s:%s: %v", address, port, err))
+			log.Errorf("error connecting to %s:%s: %v", address, port, err)
+			continue
 		}
+		connectedToBootstrap = true
+	}
+
+	if !connectedToBootstrap {
+		return plugin.Error(pluginName, c.Err("Failed to connect to any bootstrap peers!"))
 	}
 
 	// Send the initial request for more addresses; spawns goroutines to process the responses.
