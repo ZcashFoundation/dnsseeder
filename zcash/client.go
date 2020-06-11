@@ -28,7 +28,7 @@ var (
 
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "zfnd-seeder",
-	UserAgentVersion: "0.1.1",
+	UserAgentVersion: "0.1.2",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
