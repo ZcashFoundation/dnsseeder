@@ -32,7 +32,7 @@ var defaultPeerConfig = &peer.Config{
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
-	ProtocolVersion:  170011, // Heartwood
+	ProtocolVersion:  170015, // NU5 mainnet
 }
 
 var (
