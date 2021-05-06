@@ -27,12 +27,15 @@ var (
 )
 
 var defaultPeerConfig = &peer.Config{
-	UserAgentName:    "zfnd-seeder",
-	UserAgentVersion: "0.1.2",
-	ChainParams:      nil,
-	Services:         0,
-	TrickleInterval:  time.Second * 10,
-	ProtocolVersion:  170015, // NU5 mainnet
+	UserAgentName:                "zfnd-seeder",
+	UserAgentVersion:             "0.1.2",
+	ChainParams:                  nil,
+	Services:                     0,
+	TrickleInterval:              time.Second * 10,
+	// TODO: fork https://github.com/gtank/btcd/blob/master/peer/peer.go
+	//       and set MinAcceptableProtocolVersion to Zcash Canopy mainnet (170013)
+	//       see ticket #10 for details 
+	ProtocolVersion: 170013, // Zcash Canopy mainnet
 }
 
 var (
