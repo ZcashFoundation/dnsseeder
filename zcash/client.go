@@ -28,14 +28,19 @@ var (
 
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "zfnd-seeder",
-	UserAgentVersion: "0.1.3-alpha.1",
+	UserAgentVersion: "0.1.3-alpha.2",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
+	// The protocol version advertised to peers by this DNS seeder.
+	//
+	// If this version is too low, newer peers will disconnect from the DNS seeder,
+	// and it will only be able to talk to outdated peers.
+	//
 	// TODO: fork https://github.com/gtank/btcd/blob/master/peer/peer.go
-	//       and set MinAcceptableProtocolVersion to Zcash Canopy mainnet (170013)
+	//       and set MinAcceptableProtocolVersion based on the most recently activated network upgrade
 	//       see ticket #10 for details 
-	ProtocolVersion:  170013, // Zcash Canopy mainnet
+	ProtocolVersion:  170014, // Zcash NU5 testnet
 }
 
 var (
