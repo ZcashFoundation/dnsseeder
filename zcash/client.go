@@ -40,7 +40,7 @@ var defaultPeerConfig = &peer.Config{
 	// TODO: fork https://github.com/gtank/btcd/blob/master/peer/peer.go
 	//       and set MinAcceptableProtocolVersion based on the most recently activated network upgrade
 	//       see ticket #10 for details
-	ProtocolVersion:  170015, // Zcash NU5 testnet (second activation)
+	ProtocolVersion: 170015, // Zcash NU5 testnet (second activation)
 }
 
 var (
@@ -107,6 +107,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
 	newSeeder.config.Listeners.OnAddr = newSeeder.onAddr
+	newSeeder.config.Listeners.OnAddrV2 = newSeeder.onAddrV2
 
 	return &newSeeder, nil
 }
@@ -136,6 +137,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
 	newSeeder.config.Listeners.OnAddr = newSeeder.onAddr
+	newSeeder.config.Listeners.OnAddrV2 = newSeeder.onAddrV2
 
 	return &newSeeder, nil
 }
@@ -350,9 +352,6 @@ func (s *Seeder) RequestAddresses() int {
 					return
 				}
 
-				// Note that AllowSelfConns is only exposed in a fork of btcd
-				// pending https://github.com/btcsuite/btcd/pull/1481, which
-				// is why the module `replace`s btcd.
 				if !addrmgr.IsRoutable(na) && !s.config.AllowSelfConns {
 					s.logger.Printf("Got bad addr %s:%d from peer %s", na.IP, na.Port, "<placeholder>")
 					// TODO blacklist peers who give us crap addresses
