@@ -62,6 +62,10 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 	}
 }
 
+// onAddrV2 handles addrv2 messages.
+//
+// If the address is IPv4 or IPv6, it handles it the same way as an addr message.
+// If other address type is received, the address is ignored.
 func (s *Seeder) onAddrV2(p *peer.Peer, msg *wire.MsgAddrV2) {
 	if len(msg.AddrList) == 0 {
 		s.logger.Printf("Got empty addrv2 message from peer %s. Disconnecting.", p.Addr())
