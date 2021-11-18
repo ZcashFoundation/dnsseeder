@@ -105,8 +105,14 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
 	}
 
+	// The seeder only acts on verack, addr and addrv2 messages.
+	// verack is used to keep track of peers, while addr and addrv2 receives
+	// new addresses which are requested by the seeder periodically
+	// sending getaddr requests to peers (see `RequestAddresses`).
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
 	newSeeder.config.Listeners.OnAddr = newSeeder.onAddr
+	// Note that per ZIP-155 we should not receive addrv2 messages from pre-170017
+	// peers, but we don't explicitly check for that.
 	newSeeder.config.Listeners.OnAddrV2 = newSeeder.onAddrV2
 
 	return &newSeeder, nil
