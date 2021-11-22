@@ -25,6 +25,11 @@ func peerKeyFromNA(na *wire.NetAddress) PeerKey {
 	return PeerKey(net.JoinHostPort(na.IP.String(), portString))
 }
 
+func peerKeyFromNAV2(na *wire.NetAddressV2) PeerKey {
+	portString := strconv.Itoa(int(na.Port))
+	return PeerKey(net.JoinHostPort(na.IP.String(), portString))
+}
+
 // PeerMap is a typed wrapper for a sync.Map. Its keys are PeerKeys (host:port
 // format strings) and it stores a pointer to a btcsuite peer.Peer.
 type PeerMap struct {

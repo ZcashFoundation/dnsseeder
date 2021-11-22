@@ -1,8 +1,15 @@
 # Zcash DNS seeder
 
-This is a CoreDNS plugin that scrapes addresses of peers from a Zcash network. It's intended as a safer, more configurable, and more scalable replacement for the [zcash-seeder](https://github.com/zcash/zcash-seeder) project.
+This is a CoreDNS plugin that scrapes addresses of peers from a Zcash network
+and returns them on A or AAAA queries. It's intended as a safer, more configurable, and more scalable
+replacement for the [zcash-seeder](https://github.com/zcash/zcash-seeder) project.
 
 It's written in Go and uses [btcsuite](https://github.com/btcsuite) for low-level networking.
+
+It works by connecting to a list of bootstrap peers and requesting new peers by sending `getaddr`
+messages. The process is then periodically repeated with the current list of known peers.
+This plugin accepts both `addr` and `addrv2` messages, though it ignores addresses that are not
+IPv4 nor IPv6. It does not answer `getaddr` requests from other peers.
 
 ## Build instructions
 

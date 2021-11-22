@@ -61,3 +61,30 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 		s.addrQueue <- na
 	}
 }
+
+// onAddrV2 handles addrv2 messages.
+//
+// If the address is IPv4 or IPv6, it handles it the same way as an addr message.
+// If other address type is received, the address is ignored.
+func (s *Seeder) onAddrV2(p *peer.Peer, msg *wire.MsgAddrV2) {
+	if len(msg.AddrList) == 0 {
+		s.logger.Printf("Got empty addrv2 message from peer %s. Disconnecting.", p.Addr())
+		s.DisconnectPeer(peerKeyFromPeer(p))
+		return
+	}
+
+	s.logger.Printf("Got %d addrv2s from peer %s", len(msg.AddrList), p.Addr())
+
+	for _, na := range msg.AddrList {
+		if na.NetworkID == wire.NIIPV4 || na.NetworkID == wire.NIIPV6 {
+			// By checking if we know them before adding to the queue, we create
+			// the end condition for the crawler thread: it will time out after
+			// not processing any new addresses.
+			if s.addrBook.IsKnown(peerKeyFromNAV2(na)) {
+				s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
+				continue
+			}
+			s.addrQueue <- &na.NetAddress
+		}
+	}
+}

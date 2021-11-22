@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 	"github.com/btcsuite/btclog"
 	"github.com/zcashfoundation/dnsseeder/zcash/network"
 )
+
+// useAddrV2 specifies if startMockLoop() should send addrv2 messages or regular addr.
+// It's an uint32 since it's used with the atomic package.
+var useAddrV2 uint32
 
 func TestMain(m *testing.M) {
 	err := startMockLoop()
@@ -39,8 +44,6 @@ func startMockLoop() error {
 	peer.UseLogger(mockPeerLogger)
 
 	config.Listeners.OnGetAddr = func(p *peer.Peer, msg *wire.MsgGetAddr) {
-		cache := make([]*wire.NetAddress, 0, 1)
-
 		// This will an unusable peer (testnet port)
 		addr := wire.NewNetAddressTimestamp(
 			time.Now(),
@@ -65,10 +68,23 @@ func startMockLoop() error {
 			uint16(12345),
 		)
 
-		cache = append(cache, addr, addr2, addr3)
-		_, err := p.PushAddrMsg(cache)
-		if err != nil {
-			mockPeerLogger.Error(err)
+		if atomic.LoadUint32(&useAddrV2) != 0 {
+			cache := make([]*wire.NetAddressV2, 0, 1)
+			addrv2_1 := wire.NewNetAddressV2NetAddress(addr)
+			addrv2_2 := wire.NewNetAddressV2NetAddress(addr2)
+			addrv2_3 := wire.NewNetAddressV2NetAddress(addr3)
+			cache = append(cache, addrv2_1, addrv2_2, addrv2_3)
+			_, err := p.PushAddrV2Msg(cache)
+			if err != nil {
+				mockPeerLogger.Error(err)
+			}
+		} else {
+			cache := make([]*wire.NetAddress, 0, 1)
+			cache = append(cache, addr, addr2, addr3)
+			_, err := p.PushAddrMsg(cache)
+			if err != nil {
+				mockPeerLogger.Error(err)
+			}
 		}
 	}
 
@@ -204,6 +220,46 @@ func TestRequestAddresses(t *testing.T) {
 	err = regSeeder.WaitForAddresses(500, 1*time.Second)
 	if err != ErrAddressTimeout {
 		t.Errorf("Should have timed out, instead got: %v", err)
+	}
+}
+
+func TestRequestAddressesV2(t *testing.T) {
+	atomic.StoreUint32(&useAddrV2, 1)
+	defer atomic.StoreUint32(&useAddrV2, 0)
+
+	regSeeder, err := newTestSeeder(network.Regtest)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// Wrap the listener to allow checking it was called
+	originalFn := regSeeder.config.Listeners.OnAddrV2
+	var receivedAddrV2 uint32
+	regSeeder.config.Listeners.OnAddrV2 = func(p *peer.Peer, msg *wire.MsgAddrV2) {
+		atomic.StoreUint32(&receivedAddrV2, 1)
+		originalFn(p, msg)
+	}
+
+	err = regSeeder.ConnectOnDefaultPort("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go regSeeder.RequestAddresses()
+	err = regSeeder.WaitForAddresses(1, 1*time.Second)
+
+	if err != nil {
+		t.Errorf("Error getting one mocked address: %v", err)
+	}
+
+	err = regSeeder.WaitForAddresses(500, 1*time.Second)
+	if err != ErrAddressTimeout {
+		t.Errorf("Should have timed out, instead got: %v", err)
+	}
+
+	if atomic.LoadUint32(&receivedAddrV2) != 1 {
+		t.Error("OnAddrV2 was not called")
 	}
 }
 
