@@ -28,7 +28,7 @@ var (
 
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "zfnd-seeder",
-	UserAgentVersion: "0.1.3-alpha.3",
+	UserAgentVersion: "0.1.3-alpha.4",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
@@ -40,7 +40,7 @@ var defaultPeerConfig = &peer.Config{
 	// TODO: fork https://github.com/gtank/btcd/blob/master/peer/peer.go
 	//       and set MinAcceptableProtocolVersion based on the most recently activated network upgrade
 	//       see ticket #10 for details
-	ProtocolVersion: 170017, // Zcash NU5 mainnet with addrv2
+	ProtocolVersion: 170100, // Zcash NU5 mainnet
 }
 
 var (
