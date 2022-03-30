@@ -40,7 +40,7 @@ var defaultPeerConfig = &peer.Config{
 	// TODO: fork https://github.com/gtank/btcd/blob/master/peer/peer.go
 	//       and set MinAcceptableProtocolVersion based on the most recently activated network upgrade
 	//       see ticket #10 for details
-	ProtocolVersion: 170100, // Zcash NU5 mainnet with addrv2
+	ProtocolVersion: 170100, // Zcash NU5 mainnet
 }
 
 var (
