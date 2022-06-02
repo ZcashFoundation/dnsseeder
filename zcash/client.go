@@ -543,12 +543,12 @@ func (s *Seeder) Ready() bool {
 
 // Addresses returns a slice of n IPv4 addresses or as many as we have if it's less than that.
 func (s *Seeder) Addresses(n int) []net.IP {
-	return s.addrBook.shuffleAddressList(n, false)
+	return s.addrBook.shuffleAddressList(n, false, s.GetNetworkDefaultPort())
 }
 
 // AddressesV6 returns a slice of n IPv6 addresses or as many as we have if it's less than that.
 func (s *Seeder) AddressesV6(n int) []net.IP {
-	return s.addrBook.shuffleAddressList(n, true)
+	return s.addrBook.shuffleAddressList(n, true, s.GetNetworkDefaultPort())
 }
 
 // GetPeerCount returns how many valid peers we know about.
