@@ -11,5 +11,5 @@ require (
 	github.com/pkg/errors v0.9.1
 )
 
-// Currently pointing to "main-zfnd" branch
-replace github.com/btcsuite/btcd => github.com/ZcashFoundation/btcd v0.22.0-beta.0.20211118133831-ca5d3008dd64
+// Currently pointing to "min-protocol-version" branch (TODO: point to "main-zfnd" after it merges)
+replace github.com/btcsuite/btcd => github.com/ZcashFoundation/btcd v0.22.0-beta.0.20220603192021-c54970f7c43d

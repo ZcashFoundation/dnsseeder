@@ -36,11 +36,9 @@ var defaultPeerConfig = &peer.Config{
 	//
 	// If this version is too low, newer peers will disconnect from the DNS seeder,
 	// and it will only be able to talk to outdated peers.
-	//
-	// TODO: fork https://github.com/gtank/btcd/blob/master/peer/peer.go
-	//       and set MinAcceptableProtocolVersion based on the most recently activated network upgrade
-	//       see ticket #10 for details
 	ProtocolVersion: 170100, // Zcash NU5 mainnet
+	// TODO: ideally we would set 170100 for Mainnet, but there's no mechanism for that right now
+	MinAcceptableProtocolVersion: 170050, // Zcash NU5 testnet
 }
 
 var (
