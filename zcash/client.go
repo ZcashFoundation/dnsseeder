@@ -37,9 +37,17 @@ var defaultPeerConfig = &peer.Config{
 	// If this version is too low, newer peers will disconnect from the DNS seeder,
 	// and it will only be able to talk to outdated peers.
 	ProtocolVersion: 170100, // Zcash NU5 mainnet
-	// TODO: ideally we would set 170100 for Mainnet, but there's no mechanism for that right now
-	MinAcceptableProtocolVersion: 170050, // Zcash NU5 testnet
 }
+
+// The minimum acceptable protocol version for each network.
+// Current (post-NU5) values are from https://zips.z.cash/zip-0252
+const MinAcceptableProtocolVersionMainnet = 170100
+const MinAcceptableProtocolVersionTestnet = 170050
+
+// Denied ports. These are from a Zcash fork which uses the same magic numbers.
+// While they use a smaller protocol version will be filtered out, this
+// allows us to not connect to those nodes at all.
+var DeniedPorts = map[uint16]struct{}{16125: {}, 26125: {}}
 
 var (
 	// The minimum number of addresses we need to know about to begin serving introductions
@@ -159,6 +167,15 @@ func newSeederPeerConfig(magic network.Network, template *peer.Config) (*peer.Co
 		return nil, errors.Wrap(err, "couldn't construct peer config")
 	}
 	newPeerConfig.ChainParams = params
+
+	switch magic {
+	case network.Mainnet, network.Regtest:
+		newPeerConfig.MinAcceptableProtocolVersion = MinAcceptableProtocolVersionMainnet
+		break
+	case network.Testnet:
+		newPeerConfig.MinAcceptableProtocolVersion = MinAcceptableProtocolVersionTestnet
+		break
+	}
 
 	return &newPeerConfig, nil
 }
@@ -356,7 +373,8 @@ func (s *Seeder) RequestAddresses() int {
 					return
 				}
 
-				if !addrmgr.IsRoutable(na) && !s.config.AllowSelfConns {
+				_, denied := DeniedPorts[na.Port]
+				if denied || (!addrmgr.IsRoutable(na) && !s.config.AllowSelfConns) {
 					s.logger.Printf("Got bad addr %s:%d from peer %s", na.IP, na.Port, "<placeholder>")
 					// TODO blacklist peers who give us crap addresses
 					//s.DisconnectAndBlacklist(peerKeyFromPeer(p))
