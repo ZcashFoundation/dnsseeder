@@ -72,6 +72,11 @@ var (
 	blacklistDropTime = 3 * 24 * time.Hour
 )
 
+type PotentialAddr struct {
+	addr *wire.NetAddress
+	src  *peer.Peer
+}
+
 // Seeder contains all of the state and configuration needed to request addresses from Zcash peers and present them to a DNS provider.
 type Seeder struct {
 	peer   *peer.Peer
@@ -88,7 +93,7 @@ type Seeder struct {
 	addrBook *AddressBook
 
 	// The queue of incoming potential addresses
-	addrQueue chan *wire.NetAddress
+	addrQueue chan PotentialAddr
 }
 
 func NewSeeder(network network.Network) (*Seeder, error) {
@@ -108,7 +113,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
+		addrQueue:        make(chan PotentialAddr, incomingAddressBufferSize),
 	}
 
 	// The seeder only acts on verack, addr and addrv2 messages.
@@ -144,7 +149,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
+		addrQueue:        make(chan PotentialAddr, incomingAddressBufferSize),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -363,11 +368,13 @@ func (s *Seeder) RequestAddresses() int {
 			defer wg.Done()
 
 			var na *wire.NetAddress
+			var p *peer.Peer
 			for {
 				select {
 				case next := <-s.addrQueue:
 					// Pull the next address off the queue
-					na = next
+					na = next.addr
+					p = next.src
 				case <-time.After(crawlerThreadTimeout):
 					// Or die if there wasn't one
 					return
@@ -375,9 +382,8 @@ func (s *Seeder) RequestAddresses() int {
 
 				_, denied := DeniedPorts[na.Port]
 				if denied || (!addrmgr.IsRoutable(na) && !s.config.AllowSelfConns) {
-					s.logger.Printf("Got bad addr %s:%d from peer %s", na.IP, na.Port, "<placeholder>")
-					// TODO blacklist peers who give us crap addresses
-					//s.DisconnectAndBlacklist(peerKeyFromPeer(p))
+					s.logger.Printf("Got bad addr %s:%d from peer %s; blocked", na.IP, na.Port, p.NA().IP)
+					s.DisconnectAndBlacklist(peerKeyFromPeer(p))
 					continue
 				}
 

@@ -58,7 +58,7 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 			s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
 			continue
 		}
-		s.addrQueue <- na
+		s.addrQueue <- PotentialAddr{addr: na, src: p}
 	}
 }
 
@@ -84,7 +84,7 @@ func (s *Seeder) onAddrV2(p *peer.Peer, msg *wire.MsgAddrV2) {
 				s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
 				continue
 			}
-			s.addrQueue <- &na.NetAddress
+			s.addrQueue <- PotentialAddr{addr: &na.NetAddress, src: p}
 		}
 	}
 }
