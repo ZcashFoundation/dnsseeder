@@ -58,7 +58,10 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 			s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
 			continue
 		}
-		s.addrQueue <- na
+		_, denied := DeniedPorts[na.Port]
+		if !denied {
+			s.addrQueue <- na
+		}
 	}
 }
 
@@ -84,7 +87,10 @@ func (s *Seeder) onAddrV2(p *peer.Peer, msg *wire.MsgAddrV2) {
 				s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
 				continue
 			}
-			s.addrQueue <- &na.NetAddress
+			_, denied := DeniedPorts[na.Port]
+			if !denied {
+				s.addrQueue <- &na.NetAddress
+			}
 		}
 	}
 }
