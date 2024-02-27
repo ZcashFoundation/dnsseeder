@@ -70,9 +70,9 @@ func startMockLoop() error {
 
 		if atomic.LoadUint32(&useAddrV2) != 0 {
 			cache := make([]*wire.NetAddressV2, 0, 1)
-			addrv2_1 := wire.NewNetAddressV2NetAddress(addr)
-			addrv2_2 := wire.NewNetAddressV2NetAddress(addr2)
-			addrv2_3 := wire.NewNetAddressV2NetAddress(addr3)
+			addrv2_1 := wire.NetAddressV2FromBytes(addr.Timestamp, addr.Services, addr.IP.To16(), addr.Port)
+			addrv2_2 := wire.NetAddressV2FromBytes(addr2.Timestamp, addr2.Services, addr2.IP.To16(), addr2.Port)
+			addrv2_3 := wire.NetAddressV2FromBytes(addr3.Timestamp, addr3.Services, addr3.IP.To16(), addr3.Port)
 			cache = append(cache, addrv2_1, addrv2_2, addrv2_3)
 			_, err := p.PushAddrV2Msg(cache)
 			if err != nil {

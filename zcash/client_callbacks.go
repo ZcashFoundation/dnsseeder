@@ -54,8 +54,8 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 		// By checking if we know them before adding to the queue, we create
 		// the end condition for the crawler thread: it will time out after
 		// not processing any new addresses.
-		if s.addrBook.IsKnown(peerKeyFromNA(na)) {
-			s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
+		if s.addrBook.IsKnown(peerKeyFromNAV2(na)) {
+			s.logger.Printf("Already knew about %s:%d", na.Addr.String(), na.Port)
 			continue
 		}
 		_, denied := DeniedPorts[na.Port]
@@ -71,26 +71,24 @@ func (s *Seeder) onAddr(p *peer.Peer, msg *wire.MsgAddr) {
 // If other address type is received, the address is ignored.
 func (s *Seeder) onAddrV2(p *peer.Peer, msg *wire.MsgAddrV2) {
 	if len(msg.AddrList) == 0 {
-		s.logger.Printf("Got empty addrv2 message from peer %s. Disconnecting.", p.Addr())
+		s.logger.Printf("Got empty addr message from peer %s. Disconnecting.", p.Addr())
 		s.DisconnectPeer(peerKeyFromPeer(p))
 		return
 	}
 
-	s.logger.Printf("Got %d addrv2s from peer %s", len(msg.AddrList), p.Addr())
+	s.logger.Printf("Got %d addrs from peer %s", len(msg.AddrList), p.Addr())
 
 	for _, na := range msg.AddrList {
-		if na.NetworkID == wire.NIIPV4 || na.NetworkID == wire.NIIPV6 {
-			// By checking if we know them before adding to the queue, we create
-			// the end condition for the crawler thread: it will time out after
-			// not processing any new addresses.
-			if s.addrBook.IsKnown(peerKeyFromNAV2(na)) {
-				s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
-				continue
-			}
-			_, denied := DeniedPorts[na.Port]
-			if !denied {
-				s.addrQueue <- &na.NetAddress
-			}
+		// By checking if we know them before adding to the queue, we create
+		// the end condition for the crawler thread: it will time out after
+		// not processing any new addresses.
+		if s.addrBook.IsKnown(peerKeyFromNAV2(na)) {
+			s.logger.Printf("Already knew about %s:%d", na.Addr.String(), na.Port)
+			continue
+		}
+		_, denied := DeniedPorts[na.Port]
+		if !denied {
+			s.addrQueue <- na
 		}
 	}
 }

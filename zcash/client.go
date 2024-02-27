@@ -446,7 +446,7 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 				next := <-refreshQueue
 				na := next.netaddr
 
-				ipString := na.IP.String()
+				ipString := na.Addr.String()
 				portString := strconv.Itoa(int(na.Port))
 
 				// Don't care about the peer individually, just that we can connect.
@@ -454,7 +454,7 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 
 				if err != nil {
 					if err != ErrRepeatConnection {
-						s.logger.Printf("Peer %s:%d unusable on refresh. Error: %s", na.IP, na.Port, err)
+						s.logger.Printf("Peer %s:%d unusable on refresh. Error: %s", na.Addr, na.Port, err)
 						// Blacklist the peer. We might try to connect again later.
 						// This would deadlock if enqueueAddrs still holds the RLock,
 						// hence the awkward channel allocation above.
@@ -467,7 +467,7 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 					s.DisconnectPeer(next.asPeerKey())
 				}
 
-				s.logger.Printf("Validated %s", na.IP)
+				s.logger.Printf("Validated %s", na.Addr)
 			}
 			wg.Done()
 		}()
@@ -503,7 +503,7 @@ func (s *Seeder) RetryBlacklist() {
 				next := <-blacklistQueue
 				na := next.netaddr
 
-				ip := na.IP.String()
+				ip := na.Addr.String()
 				port := strconv.Itoa(int(na.Port))
 
 				// Call internal connect directly to avoid being blocked
