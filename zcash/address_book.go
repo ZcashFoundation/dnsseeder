@@ -11,13 +11,13 @@ import (
 )
 
 type Address struct {
-	netaddr    *wire.NetAddress
+	netaddr    *wire.NetAddressV2
 	lastUpdate time.Time
 }
 
 func (a *Address) String() string {
 	portString := strconv.Itoa(int(a.netaddr.Port))
-	return net.JoinHostPort(a.netaddr.IP.String(), portString)
+	return net.JoinHostPort(a.netaddr.Addr.String(), portString)
 }
 
 func (a *Address) asPeerKey() PeerKey {
@@ -35,7 +35,7 @@ func (a *Address) fromPeerKey(s PeerKey) (*Address, error) {
 		return nil, err
 	}
 
-	na := wire.NewNetAddressTimestamp(
+	na := wire.NetAddressV2FromBytes(
 		time.Now(),
 		0,
 		net.ParseIP(host),
@@ -47,13 +47,13 @@ func (a *Address) fromPeerKey(s PeerKey) (*Address, error) {
 	return a, nil
 }
 
-func (a *Address) asNetAddress() *wire.NetAddress {
+func (a *Address) asNetAddress() *wire.NetAddressV2 {
 	newNA := *a.netaddr
 	newNA.Timestamp = a.lastUpdate
 	return &newNA
 }
 
-func (a *Address) fromNetAddress(na *wire.NetAddress) (*Address, error) {
+func (a *Address) fromNetAddress(na *wire.NetAddressV2) (*Address, error) {
 	a.netaddr = na
 	a.lastUpdate = na.Timestamp
 	return a, nil
@@ -222,6 +222,12 @@ func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
 	return
 }
 
+// Validate is an address is an IPv4 address.
+func (bk *AddressBook) Validate(s string) bool {
+	ip := net.ParseIP(s)
+	return ip.To4() != nil
+}
+
 // GetAddressList returns a slice of n valid addresses in random order.
 // If there aren't enough known addresses, it returns as many as we have.
 func (bk *AddressBook) shuffleAddressList(n int, v6 bool, defaultPort string) []net.IP {
@@ -236,12 +242,12 @@ func (bk *AddressBook) shuffleAddressList(n int, v6 bool, defaultPort string) []
 			continue
 		}
 
-		if v6 && v.netaddr.IP.To4() != nil {
+		if v6 && bk.Validate(v.netaddr.Addr.String()) {
 			// skip IPv4 addresses if we're asked for v6
 			continue
 		}
 
-		if !v6 && v.netaddr.IP.To4() == nil {
+		if !v6 && !bk.Validate(v.netaddr.Addr.String()) {
 			// skip IPv6 addresses if we're asked for v4
 			continue
 		}
@@ -253,7 +259,7 @@ func (bk *AddressBook) shuffleAddressList(n int, v6 bool, defaultPort string) []
 			continue
 		}
 
-		resp = append(resp, v.netaddr.IP)
+		resp = append(resp, net.IP(v.netaddr.Addr.String()))
 	}
 
 	mrand.Seed(time.Now().UnixNano())

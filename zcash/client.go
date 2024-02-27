@@ -88,7 +88,7 @@ type Seeder struct {
 	addrBook *AddressBook
 
 	// The queue of incoming potential addresses
-	addrQueue chan *wire.NetAddress
+	addrQueue chan *wire.NetAddressV2
 }
 
 func NewSeeder(network network.Network) (*Seeder, error) {
@@ -108,7 +108,7 @@ func NewSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
+		addrQueue:        make(chan *wire.NetAddressV2, incomingAddressBufferSize),
 	}
 
 	// The seeder only acts on verack, addr and addrv2 messages.
@@ -144,7 +144,7 @@ func newTestSeeder(network network.Network) (*Seeder, error) {
 		pendingPeers:     NewPeerMap(),
 		livePeers:        NewPeerMap(),
 		addrBook:         NewAddressBook(),
-		addrQueue:        make(chan *wire.NetAddress, incomingAddressBufferSize),
+		addrQueue:        make(chan *wire.NetAddressV2, incomingAddressBufferSize),
 	}
 
 	newSeeder.config.Listeners.OnVerAck = newSeeder.onVerAck
@@ -170,10 +170,10 @@ func newSeederPeerConfig(magic network.Network, template *peer.Config) (*peer.Co
 
 	switch magic {
 	case network.Mainnet, network.Regtest:
-		newPeerConfig.MinAcceptableProtocolVersion = MinAcceptableProtocolVersionMainnet
+		newPeerConfig.ProtocolVersion = MinAcceptableProtocolVersionMainnet
 		break
 	case network.Testnet:
-		newPeerConfig.MinAcceptableProtocolVersion = MinAcceptableProtocolVersionTestnet
+		newPeerConfig.ProtocolVersion = MinAcceptableProtocolVersionTestnet
 		break
 	}
 
@@ -362,7 +362,7 @@ func (s *Seeder) RequestAddresses() int {
 		go func() {
 			defer wg.Done()
 
-			var na *wire.NetAddress
+			var na *wire.NetAddressV2
 			for {
 				select {
 				case next := <-s.addrQueue:
@@ -375,21 +375,21 @@ func (s *Seeder) RequestAddresses() int {
 
 				_, denied := DeniedPorts[na.Port]
 				if denied || (!addrmgr.IsRoutable(na) && !s.config.AllowSelfConns) {
-					s.logger.Printf("Got bad addr %s:%d from peer %s", na.IP, na.Port, "<placeholder>")
+					s.logger.Printf("Got bad addr %s:%d from peer %s", na.Addr.String(), na.Port, "<placeholder>")
 					// TODO blacklist peers who give us crap addresses
 					//s.DisconnectAndBlacklist(peerKeyFromPeer(p))
 					continue
 				}
 
-				potentialPeer := peerKeyFromNA(na)
+				potentialPeer := peerKeyFromNAV2(na)
 
 				if s.addrBook.IsKnown(potentialPeer) {
-					s.logger.Printf("Already knew about %s:%d", na.IP, na.Port)
+					s.logger.Printf("Already knew about %s:%d", na.Addr.String(), na.Port)
 					continue
 				}
 
 				portString := strconv.Itoa(int(na.Port))
-				newPeer, err := s.Connect(na.IP.String(), portString)
+				newPeer, err := s.Connect(na.Addr.String(), portString)
 
 				if err != nil {
 					if err == ErrRepeatConnection {
@@ -399,7 +399,7 @@ func (s *Seeder) RequestAddresses() int {
 
 					// Blacklist the potential peer. We might try to connect again later,
 					// since we assume IsRoutable filtered out the truly wrong ones.
-					s.logger.Printf("Got unusable peer %s:%d. Error: %s", na.IP, na.Port, err)
+					s.logger.Printf("Got unusable peer %s:%d. Error: %s", na.Addr.String(), na.Port, err)
 					s.addrBook.Blacklist(potentialPeer)
 					continue
 				}
@@ -407,7 +407,7 @@ func (s *Seeder) RequestAddresses() int {
 				// Ask the newly discovered peer if they know anyone we haven't met yet.
 				newPeer.QueueMessage(wire.NewMsgGetAddr(), nil)
 
-				s.logger.Printf("Successfully learned about %s:%d.", na.IP, na.Port)
+				s.logger.Printf("Successfully learned about %s:%d.", na.Addr.String(), na.Port)
 				atomic.AddInt32(&peerCount, 1)
 				s.addrBook.Add(potentialPeer)
 			}
@@ -446,7 +446,7 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 				next := <-refreshQueue
 				na := next.netaddr
 
-				ipString := na.IP.String()
+				ipString := na.Addr.String()
 				portString := strconv.Itoa(int(na.Port))
 
 				// Don't care about the peer individually, just that we can connect.
@@ -454,7 +454,7 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 
 				if err != nil {
 					if err != ErrRepeatConnection {
-						s.logger.Printf("Peer %s:%d unusable on refresh. Error: %s", na.IP, na.Port, err)
+						s.logger.Printf("Peer %s:%d unusable on refresh. Error: %s", na.Addr, na.Port, err)
 						// Blacklist the peer. We might try to connect again later.
 						// This would deadlock if enqueueAddrs still holds the RLock,
 						// hence the awkward channel allocation above.
@@ -467,7 +467,7 @@ func (s *Seeder) RefreshAddresses(disconnect bool) {
 					s.DisconnectPeer(next.asPeerKey())
 				}
 
-				s.logger.Printf("Validated %s", na.IP)
+				s.logger.Printf("Validated %s", na.Addr)
 			}
 			wg.Done()
 		}()
@@ -503,7 +503,7 @@ func (s *Seeder) RetryBlacklist() {
 				next := <-blacklistQueue
 				na := next.netaddr
 
-				ip := na.IP.String()
+				ip := na.Addr.String()
 				port := strconv.Itoa(int(na.Port))
 
 				// Call internal connect directly to avoid being blocked

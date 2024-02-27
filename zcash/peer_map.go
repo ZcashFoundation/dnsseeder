@@ -27,7 +27,7 @@ func peerKeyFromNA(na *wire.NetAddress) PeerKey {
 
 func peerKeyFromNAV2(na *wire.NetAddressV2) PeerKey {
 	portString := strconv.Itoa(int(na.Port))
-	return PeerKey(net.JoinHostPort(na.IP.String(), portString))
+	return PeerKey(net.JoinHostPort(na.Addr.String(), portString))
 }
 
 // PeerMap is a typed wrapper for a sync.Map. Its keys are PeerKeys (host:port
