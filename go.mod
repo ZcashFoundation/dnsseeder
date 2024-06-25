@@ -1,6 +1,6 @@
 module github.com/zcashfoundation/dnsseeder
 
-go 1.21.0
+go 1.21
 
 require (
 	github.com/btcsuite/btcd v0.22.0-beta

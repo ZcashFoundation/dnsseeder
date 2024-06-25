@@ -70,13 +70,22 @@ func setup(c *caddy.Controller) error {
 			return plugin.Error(pluginName, c.Errf("config error: expected 'host:port', got %s", s))
 		}
 
-		// Connect to the bootstrap peer
-		_, err = seeder.Connect(address, port)
+		addresses, err := net.LookupHost(address)
 		if err != nil {
-			log.Errorf("error connecting to %s:%s: %v", address, port, err)
-			continue
+			return plugin.Error(pluginName, c.Errf("error looking up host %s: %v", address, err))
 		}
-		connectedToBootstrap = true
+		log.Infof("Got %d addresses from peer %v: %v", len(addresses), s, addresses)
+
+		for _, address := range addresses {
+			// Connect to the bootstrap peer
+			_, err = seeder.Connect(address, port)
+			if err != nil {
+				log.Errorf("error connecting to %s:%s (will keep trying other peers): %v", address, port, err)
+			} else {
+				log.Infof("success connecting to %s:%s (will keep trying other peers)", address, port)
+				connectedToBootstrap = true
+			}
+		}
 	}
 
 	if !connectedToBootstrap {
