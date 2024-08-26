@@ -28,7 +28,7 @@ var (
 
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "zfnd-seeder",
-	UserAgentVersion: "0.1.3-alpha.4",
+	UserAgentVersion: "0.2.5",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
@@ -36,7 +36,7 @@ var defaultPeerConfig = &peer.Config{
 	//
 	// If this version is too low, newer peers will disconnect from the DNS seeder,
 	// and it will only be able to talk to outdated peers.
-	ProtocolVersion: 170100, // Zcash NU5 mainnet
+	ProtocolVersion: 170120, // Zcash NU6 mainnet
 }
 
 // The minimum acceptable protocol version for each network.
