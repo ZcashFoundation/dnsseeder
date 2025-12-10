@@ -61,6 +61,10 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error(pluginName, err)
 	}
 
+	// Set max address age to 2x crawl interval.
+	// This ensures addresses are excluded if they miss two consecutive validations.
+	seeder.SetMaxAddressAge(opts.updateInterval * 2)
+
 	log.Infof("Getting addresses from bootstrap peers %v", opts.bootstrapPeers)
 
 	connectedToBootstrap := false

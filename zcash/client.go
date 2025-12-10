@@ -89,6 +89,11 @@ type Seeder struct {
 
 	// The queue of incoming potential addresses
 	addrQueue chan *wire.NetAddress
+
+	// Maximum age of addresses to return in DNS responses.
+	// Addresses not validated within this duration are excluded.
+	// Use 0 to disable age filtering.
+	maxAddressAge time.Duration
 }
 
 func NewSeeder(network network.Network) (*Seeder, error) {
@@ -557,14 +562,23 @@ func (s *Seeder) Ready() bool {
 	return s.WaitForAddresses(minimumReadyAddresses, 1*time.Millisecond) == nil
 }
 
+// SetMaxAddressAge sets the maximum age for addresses returned in DNS responses.
+// Addresses that haven't been validated within this duration will be excluded.
+// Use 0 to disable age filtering.
+func (s *Seeder) SetMaxAddressAge(maxAge time.Duration) {
+	s.maxAddressAge = maxAge
+}
+
 // Addresses returns a slice of n IPv4 addresses or as many as we have if it's less than that.
+// Addresses older than maxAddressAge are excluded.
 func (s *Seeder) Addresses(n int) []net.IP {
-	return s.addrBook.shuffleAddressList(n, false, s.GetNetworkDefaultPort())
+	return s.addrBook.shuffleAddressList(n, false, s.GetNetworkDefaultPort(), s.maxAddressAge)
 }
 
 // AddressesV6 returns a slice of n IPv6 addresses or as many as we have if it's less than that.
+// Addresses older than maxAddressAge are excluded.
 func (s *Seeder) AddressesV6(n int) []net.IP {
-	return s.addrBook.shuffleAddressList(n, true, s.GetNetworkDefaultPort())
+	return s.addrBook.shuffleAddressList(n, true, s.GetNetworkDefaultPort(), s.maxAddressAge)
 }
 
 // GetPeerCount returns how many valid peers we know about.

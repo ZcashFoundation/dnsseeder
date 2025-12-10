@@ -222,9 +222,11 @@ func (bk *AddressBook) waitForAddresses(n int, done chan struct{}) {
 	return
 }
 
-// GetAddressList returns a slice of n valid addresses in random order.
+// shuffleAddressList returns a slice of n valid addresses in random order.
 // If there aren't enough known addresses, it returns as many as we have.
-func (bk *AddressBook) shuffleAddressList(n int, v6 bool, defaultPort string) []net.IP {
+// Addresses older than maxAge are excluded from the result. Use maxAge=0 to
+// disable age filtering.
+func (bk *AddressBook) shuffleAddressList(n int, v6 bool, defaultPort string, maxAge time.Duration) []net.IP {
 	bk.addrState.RLock()
 	defer bk.addrState.RUnlock()
 
@@ -233,6 +235,11 @@ func (bk *AddressBook) shuffleAddressList(n int, v6 bool, defaultPort string) []
 	for k, v := range bk.peers {
 		if _, blacklisted := bk.blacklist[k]; blacklisted {
 			// Check in case we've accidentally registered a bad peer
+			continue
+		}
+
+		// Skip addresses that haven't been validated recently
+		if maxAge > 0 && time.Since(v.lastUpdate) > maxAge {
 			continue
 		}
 
