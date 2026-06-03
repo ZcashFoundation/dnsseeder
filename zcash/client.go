@@ -28,7 +28,7 @@ var (
 
 var defaultPeerConfig = &peer.Config{
 	UserAgentName:    "zfnd-seeder",
-	UserAgentVersion: "0.4.0",
+	UserAgentVersion: "0.5.0",
 	ChainParams:      nil,
 	Services:         0,
 	TrickleInterval:  time.Second * 10,
@@ -36,13 +36,13 @@ var defaultPeerConfig = &peer.Config{
 	//
 	// If this version is too low, newer peers will disconnect from the DNS seeder,
 	// and it will only be able to talk to outdated peers.
-	ProtocolVersion: 170140, // Zcash NU6.1 mainnet
+	ProtocolVersion: 170150, // Zcash NU6.2 (mainnet + testnet)
 }
 
 // The minimum acceptable protocol version for each network.
-// Current (post-NU6) values are from https://zips.z.cash/zip-0253
-const MinAcceptableProtocolVersionMainnet = 170120
-const MinAcceptableProtocolVersionTestnet = 170110
+// Current (post-NU6.1) values are from https://zips.z.cash/zip-0255
+const MinAcceptableProtocolVersionMainnet = 170140
+const MinAcceptableProtocolVersionTestnet = 170130
 
 // Denied ports. These are from a Zcash fork which uses the same magic numbers.
 // While they use a smaller protocol version will be filtered out, this
